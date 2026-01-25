@@ -9,6 +9,34 @@ declare(strict_types=1);
  */
 
 // ============================================================================
+// Environment Configuration (.env loader)
+// ============================================================================
+
+(function() {
+    $envFile = __DIR__ . '/.env';
+    if (!file_exists($envFile)) return;
+
+    foreach (file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+        if (str_starts_with(trim($line), '#')) continue;
+        if (!str_contains($line, '=')) continue;
+
+        [$key, $value] = explode('=', $line, 2);
+        $key = trim($key);
+        $value = trim($value);
+
+        // Don't override existing env vars
+        if (getenv($key) === false) {
+            putenv("{$key}={$value}");
+        }
+    }
+})();
+
+/** Get env var with optional default */
+function appmesh_env(string $key, string $default = ''): string {
+    return getenv($key) ?: $default;
+}
+
+// ============================================================================
 // Tool Definition
 // ============================================================================
 

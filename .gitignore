@@ -1,0 +1,17 @@
+# Environment (contains secrets)
+server/.env
+
+# Temp/cache
+*.log
+*.cache
+/tmp/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

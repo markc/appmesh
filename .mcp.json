@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "appmesh": {
+      "command": "/usr/sbin/php",
+      "args": ["/home/markc/.appmesh/server/appmesh-mcp.php"]
+    }
+  }
+}

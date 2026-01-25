@@ -1,7 +1,7 @@
 ---
 updated: 2026-01-25
 scope: /
-parent: ../ai.txt
+parent: https://raw.githubusercontent.com/markc/Dev/main/ai.txt
 ---
 
 # AppMesh
@@ -38,4 +38,3 @@ php -S localhost:8420 -t web/
 
 - Website: appmesh.nexus
 - Repository: github.com/markc/appmesh
-- Parent: [Dev workspace](../ai.txt)

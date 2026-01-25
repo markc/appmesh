@@ -1,0 +1,41 @@
+---
+updated: 2026-01-25
+scope: /
+parent: ../ai.txt
+---
+
+# AppMesh
+
+Desktop automation through application mesh networking - the modern successor to ARexx.
+
+## What It Does
+
+Enables Claude Code and scripts to control desktop applications via D-Bus and OSC protocols. Your computer becomes a mesh of cooperating programs orchestrated through natural language.
+
+## Architecture
+
+MCP server with protocol plugins:
+- **D-Bus plugin**: Clipboard, notifications, screenshots, window management
+- **OSC plugin**: Ardour DAW, Carla plugin host control
+
+## Current Tools
+
+**D-Bus (8 tools):** clipboard get/set, notify, screenshot, dbus_call, dbus_list, kwin window list/activate
+
+**OSC (3 tools):** generic send, Ardour control, Carla control
+
+## Running
+
+```bash
+# MCP server (auto-loaded by Claude Code)
+php server/appmesh-mcp.php
+
+# Web UI
+php -S localhost:8420 -t web/
+```
+
+## Links
+
+- Website: appmesh.nexus
+- Repository: github.com/markc/appmesh
+- Parent: [Dev workspace](../ai.txt)

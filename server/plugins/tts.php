@@ -11,6 +11,43 @@
  */
 
 // ============================================================================
+// Pronunciation Dictionary
+// ============================================================================
+
+const PRONUNCIATION_MAP = [
+    'CachyOS' => 'Kay-shee OS',
+    'cachyos' => 'kay-shee OS',
+    'AppMesh' => 'App Mesh',
+    'appmesh' => 'app mesh',
+    'ARexx' => 'Ay-Rex',
+    'arexx' => 'ay-rex',
+    'D-Bus' => 'Dee-Bus',
+    'd-bus' => 'dee-bus',
+    'dbus' => 'dee-bus',
+    'KDE' => 'Kay Dee Ee',
+    'GNOME' => 'Guh-nome',
+    'CLI' => 'command line',
+    'API' => 'A P I',
+    'MCP' => 'M C P',
+    'OSC' => 'O S C',
+    'MIDI' => 'middy',
+    'stdin' => 'standard in',
+    'stdout' => 'standard out',
+    'stderr' => 'standard error',
+    'sudo' => 'sue-doo',
+    'nginx' => 'engine-X',
+    'kubectl' => 'cube-control',
+];
+
+function appmesh_tts_pronounce(string $text): string {
+    return str_replace(
+        array_keys(PRONUNCIATION_MAP),
+        array_values(PRONUNCIATION_MAP),
+        $text
+    );
+}
+
+// ============================================================================
 // Helpers
 // ============================================================================
 
@@ -56,6 +93,7 @@ function gemini_text(string $prompt): string {
 }
 
 function gemini_tts(string $text, string $voice, string $style, string $outPath): string {
+    $text = appmesh_tts_pronounce($text);
     $prompt = $style ? "Style: {$style}\n\n{$text}" : $text;
 
     $result = gemini_request('gemini-2.5-flash-preview-tts', [
@@ -64,7 +102,7 @@ function gemini_tts(string $text, string $voice, string $style, string $outPath)
             'responseModalities' => ['AUDIO'],
             'speechConfig' => [
                 'voiceConfig' => ['prebuiltVoiceConfig' => ['voiceName' => $voice]],
-                'languageCode' => 'en-AU',
+                'languageCode' => 'en-US',
             ],
         ],
     ]);
@@ -93,7 +131,7 @@ return [
         inputSchema: schema([
             'text' => prop('string', 'Text to speak (or path to .txt file)'),
             'voice' => prop('string', 'Voice: Kore, Charon, Puck, Fenrir, Zephyr, etc. Default: Kore'),
-            'style' => prop('string', 'Delivery style, e.g. "Australian accent, professional"'),
+            'style' => prop('string', 'Delivery style, e.g. "mid-Atlantic accent, professional"'),
         ], ['text']),
         handler: function(array $a): string {
             $text = $a['text'];
@@ -124,7 +162,7 @@ return [
                 - Duration: {$duration} | Audience: {$audience}
                 - Include [PAUSE] markers and [ACTION] cues like [SHOW TERMINAL]
                 - Start with a hook, end with summary
-                - Australian English spelling
+                - American English spelling
                 - Plain text for TTS, no timestamps
                 PROMPT);
 
@@ -143,20 +181,20 @@ return [
         inputSchema: schema([
             'topic' => prop('string', 'Tutorial topic'),
             'voice' => prop('string', 'TTS voice. Default: Kore'),
-            'style' => prop('string', 'Voice style. Default: Clear, professional, Australian accent'),
+            'style' => prop('string', 'Voice style. Default: Neutral mid-Atlantic, professional'),
         ], ['topic']),
         handler: function(array $a): string {
             $dir = appmesh_tts_output_dir();
             $topic = $a['topic'];
             $voice = $a['voice'] ?? 'Kore';
-            $style = $a['style'] ?? 'Clear, professional tutorial voice with Australian accent';
+            $style = $a['style'] ?? 'Neutral mid-Atlantic accent, clear and professional, like a calm documentary narrator';
             $ts = time();
             $slug = strtolower(preg_replace('/[^a-z0-9]+/i', '_', substr($topic, 0, 30)));
 
             // Generate script
             $script = gemini_text(<<<PROMPT
                 Write a 3-minute tutorial script about: {$topic}
-                Include [PAUSE] markers and [ACTION] cues. Australian English. Plain text for TTS.
+                Include [PAUSE] markers and [ACTION] cues. American English. Plain text for TTS.
                 PROMPT);
 
             if (str_starts_with($script, 'Error:')) return $script;
@@ -179,28 +217,42 @@ return [
             'action' => prop('string', 'start, stop, or status'),
         ], ['action']),
         handler: function(array $a): string {
+            $script = __DIR__ . '/../scripts/screen-record.sh';
+            $action = $a['action'];
+            $uid = posix_getuid();
+            $runtimeDir = "/run/user/{$uid}";
+
+            // Use wrapper script for reliable background process management
+            // Check for Wayland via multiple methods since MCP server may not have XDG vars
+            $isWayland = getenv('XDG_SESSION_TYPE') === 'wayland'
+                || getenv('WAYLAND_DISPLAY')
+                || file_exists("{$runtimeDir}/wayland-0");
+            if (file_exists($script) && $isWayland) {
+                $out = appmesh_tts_output_dir() . '/recording_' . time() . '.mp4';
+
+                // Ensure display environment is set for the subprocess
+                $envPrefix = "WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR={$runtimeDir} DBUS_SESSION_BUS_ADDRESS=unix:path={$runtimeDir}/bus";
+
+                $cmd = match($action) {
+                    'start' => "{$envPrefix} " . escapeshellarg($script) . " start " . escapeshellarg($out),
+                    'stop' => escapeshellarg($script) . " stop",
+                    'status' => escapeshellarg($script) . " status",
+                    default => null,
+                };
+                return $cmd ? trim(shell_exec($cmd) ?? 'Error') : 'Error: Use start, stop, or status';
+            }
+
+            // Fallback for X11 or if script not found
             $pidFile = '/tmp/appmesh-recording.pid';
 
-            return match($a['action']) {
+            return match($action) {
                 'start' => (function() use ($pidFile) {
                     if (file_exists($pidFile)) return 'Error: Recording in progress. Use stop first.';
-
                     $out = appmesh_tts_output_dir() . '/recording_' . time() . '.mp4';
-                    $isWayland = getenv('XDG_SESSION_TYPE') === 'wayland';
-
-                    if ($isWayland) {
-                        if (!trim(shell_exec('which wl-screenrec 2>/dev/null') ?? '')) {
-                            return 'Error: Install wl-screenrec (paru -S wl-screenrec) or use OBS';
-                        }
-                        $cmd = "wl-screenrec -f " . escapeshellarg($out) . " </dev/null >/dev/null 2>&1 & echo \$!";
-                    } else {
-                        $size = trim(shell_exec("xdpyinfo 2>/dev/null | grep dimensions | awk '{print \$2}'") ?? '1920x1080');
-                        $cmd = "ffmpeg -f x11grab -video_size {$size} -framerate 30 -i :0 -c:v libx264 -preset ultrafast " . escapeshellarg($out) . " </dev/null >/dev/null 2>&1 & echo \$!";
-                    }
-
+                    $size = trim(shell_exec("xdpyinfo 2>/dev/null | grep dimensions | awk '{print \$2}'") ?? '1920x1080');
+                    $cmd = "ffmpeg -f x11grab -video_size {$size} -framerate 30 -i :0 -c:v libx264 -preset ultrafast " . escapeshellarg($out) . " </dev/null >/dev/null 2>&1 & echo \$!";
                     $p = trim(shell_exec($cmd) ?? '');
                     if (!$p || !is_numeric($p)) return 'Error: Failed to start recording';
-
                     file_put_contents($pidFile, "{$p}\n{$out}");
                     return "Recording started (PID: {$p})\nOutput: {$out}";
                 })(),
@@ -209,7 +261,7 @@ return [
                     if (!file_exists($pidFile)) return 'No recording in progress';
                     [$p, $out] = explode("\n", file_get_contents($pidFile));
                     exec("kill -INT " . intval($p) . " 2>/dev/null");
-                    sleep(1);
+                    sleep(2);
                     exec("kill -9 " . intval($p) . " 2>/dev/null");
                     unlink($pidFile);
                     return "Recording stopped: {$out}";

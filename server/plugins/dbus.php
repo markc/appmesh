@@ -10,12 +10,6 @@
 // D-Bus Helper Functions
 // ============================================================================
 
-function qdbus(string $service, string $path, string $method, array $args = []): string
-{
-    $cmd = ['qdbus6', $service, $path, $method, ...array_map('escapeshellarg', $args)];
-    return trim(shell_exec(implode(' ', $cmd)) ?? '');
-}
-
 function qdbus_call(string $service, string $path, string $method, array $args = []): string
 {
     $escaped = array_map(fn($a) => escapeshellarg((string)$a), $args);
@@ -39,7 +33,7 @@ return [
         description: 'Get the current clipboard contents from KDE Klipper',
         inputSchema: schema(),
         handler: fn(array $args): string =>
-            qdbus('org.kde.klipper', '/klipper', 'org.kde.klipper.klipper.getClipboardContents')
+            qdbus_call('org.kde.klipper', '/klipper', 'org.kde.klipper.klipper.getClipboardContents')
     ),
 
     'appmesh_clipboard_set' => new Tool(
@@ -50,7 +44,7 @@ return [
         ),
         handler: function (array $args): string {
             $content = $args['content'] ?? '';
-            qdbus('org.kde.klipper', '/klipper', 'org.kde.klipper.klipper.setClipboardContents', [$content]);
+            qdbus_call('org.kde.klipper', '/klipper', 'org.kde.klipper.klipper.setClipboardContents', [$content]);
             return "Clipboard set to: " . substr($content, 0, 100) . (strlen($content) > 100 ? '...' : '');
         }
     ),

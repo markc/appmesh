@@ -112,13 +112,24 @@ function gemini_tts(string $text, string $voice, string $style, string $outPath)
     $audio = $result['candidates'][0]['content']['parts'][0]['inlineData']['data'] ?? null;
     if (!$audio) return 'Error: No audio data';
 
-    // Convert PCM to WAV (temp file in /tmp)
-    $raw = '/tmp/appmesh-tts-' . uniqid() . '.raw';
+    // Convert PCM to WAV (temp file in secure location)
+    $raw = appmesh_tempfile('tts', 'raw');
     file_put_contents($raw, base64_decode($audio));
-    exec("ffmpeg -y -f s16le -ar 24000 -ac 1 -i " . escapeshellarg($raw) . " " . escapeshellarg($outPath) . " 2>&1", $_, $code);
+
+    $ffmpegResult = appmesh_exec(
+        "ffmpeg -y -f s16le -ar 24000 -ac 1 -i " . escapeshellarg($raw) . " " . escapeshellarg($outPath)
+    );
     @unlink($raw);
 
-    return $code === 0 ? "Audio: {$outPath}" : 'Error: FFmpeg failed';
+    if (!$ffmpegResult['success']) {
+        AppMeshLogger::error("FFmpeg TTS conversion failed", [
+            'exitCode' => $ffmpegResult['exitCode'],
+            'output' => substr($ffmpegResult['output'], 0, 200),
+        ]);
+        return 'Error: FFmpeg failed';
+    }
+
+    return "Audio: {$outPath}";
 }
 
 // ============================================================================
@@ -243,27 +254,42 @@ return [
             }
 
             // Fallback for X11 or if script not found
-            $pidFile = '/tmp/appmesh-recording.pid';
+            $pidFile = appmesh_tempfile('recording', 'pid');
+            // Use consistent location for the PID file across calls
+            $uid = posix_getuid();
+            $runtimeDir = getenv('XDG_RUNTIME_DIR') ?: "/run/user/{$uid}";
+            $tempDir = is_dir($runtimeDir) && is_writable($runtimeDir)
+                ? "{$runtimeDir}/appmesh"
+                : "/tmp/appmesh-{$uid}";
+            if (!is_dir($tempDir)) mkdir($tempDir, 0700, true);
+            $pidFile = "{$tempDir}/recording.pid";
 
             return match($action) {
                 'start' => (function() use ($pidFile) {
                     if (file_exists($pidFile)) return 'Error: Recording in progress. Use stop first.';
                     $out = appmesh_tts_output_dir() . '/recording_' . time() . '.mp4';
-                    $size = trim(shell_exec("xdpyinfo 2>/dev/null | grep dimensions | awk '{print \$2}'") ?? '1920x1080');
+                    $sizeResult = appmesh_exec("xdpyinfo | grep dimensions | awk '{print \$2}'", false);
+                    $size = $sizeResult['success'] && $sizeResult['output'] ? trim($sizeResult['output']) : '1920x1080';
                     $cmd = "ffmpeg -f x11grab -video_size {$size} -framerate 30 -i :0 -c:v libx264 -preset ultrafast " . escapeshellarg($out) . " </dev/null >/dev/null 2>&1 & echo \$!";
                     $p = trim(shell_exec($cmd) ?? '');
                     if (!$p || !is_numeric($p)) return 'Error: Failed to start recording';
-                    file_put_contents($pidFile, "{$p}\n{$out}");
+                    file_put_contents($pidFile, "{$p}\n{$out}", LOCK_EX);
+                    chmod($pidFile, 0600);
                     return "Recording started (PID: {$p})\nOutput: {$out}";
                 })(),
 
                 'stop' => (function() use ($pidFile) {
                     if (!file_exists($pidFile)) return 'No recording in progress';
                     [$p, $out] = explode("\n", file_get_contents($pidFile));
-                    exec("kill -INT " . intval($p) . " 2>/dev/null");
-                    sleep(2);
-                    exec("kill -9 " . intval($p) . " 2>/dev/null");
-                    unlink($pidFile);
+                    $p = intval($p);
+                    if ($p > 0) {
+                        posix_kill($p, SIGINT);
+                        sleep(2);
+                        if (file_exists("/proc/{$p}")) {
+                            posix_kill($p, SIGKILL);
+                        }
+                    }
+                    @unlink($pidFile);
                     return "Recording stopped: {$out}";
                 })(),
 

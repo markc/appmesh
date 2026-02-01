@@ -24,8 +24,20 @@ if ($path === '/sse/signals') {
 // Check if HTMX request
 $isHtmx = isset($_SERVER['HTTP_HX_REQUEST']);
 
-// CORS
-header('Access-Control-Allow-Origin: *');
+// CORS - Restrict to localhost by default, configurable via environment
+$allowedOrigins = appmesh_env('APPMESH_CORS_ORIGINS', 'http://localhost:8420,http://127.0.0.1:8420');
+$allowedList = array_map('trim', explode(',', $allowedOrigins));
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+
+// Only allow explicitly configured origins (localhost by default)
+if ($origin && in_array($origin, $allowedList, true)) {
+    header("Access-Control-Allow-Origin: {$origin}");
+    header('Access-Control-Allow-Credentials: true');
+} elseif (!$origin) {
+    // Same-origin requests (no Origin header) - allow for direct browser access
+    header('Access-Control-Allow-Origin: http://localhost:8420');
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
     header('Access-Control-Allow-Headers: Content-Type, HX-Request');

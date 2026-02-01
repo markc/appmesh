@@ -78,9 +78,8 @@ return [
             ['mode' => prop('string', 'Screenshot mode', ['enum' => ['fullscreen', 'activewindow', 'region']])]
         ),
         handler: function (array $args): string {
-            $mode = $args['mode'] ?? 'fullscreen';
-            $timestamp = date('Y-m-d_H-i-s');
-            $filename = "/tmp/screenshot_{$timestamp}.png";
+            $mode = appmesh_arg($args, 'mode', 'fullscreen');
+            $filename = appmesh_tempfile('screenshot', 'png');
 
             $modeFlag = match ($mode) {
                 'activewindow' => '-a',
@@ -88,15 +87,20 @@ return [
                 default => '-f',
             };
 
-            $cmd = "spectacle $modeFlag -b -n -o " . escapeshellarg($filename) . " 2>&1";
-            shell_exec($cmd);
+            $result = appmesh_exec("spectacle {$modeFlag} -b -n -o " . escapeshellarg($filename));
 
             usleep(500000);
 
             if (file_exists($filename)) {
-                return "Screenshot saved: $filename";
+                return "Screenshot saved: {$filename}";
             }
-            return "Screenshot may have been saved to: $filename (verify manually)";
+
+            AppMeshLogger::warning("Screenshot may have failed", [
+                'mode' => $mode,
+                'exitCode' => $result['exitCode'],
+            ]);
+
+            return "Screenshot may have been saved to: {$filename} (verify manually)";
         }
     ),
 
@@ -170,7 +174,7 @@ return [
             JSON.stringify(result);
             JS;
 
-            $scriptFile = '/tmp/appmesh_list_windows.js';
+            $scriptFile = appmesh_tempfile('kwin_list_windows', 'js');
             file_put_contents($scriptFile, $script);
 
             $loadResult = qdbus_call(
@@ -180,26 +184,28 @@ return [
                 [$scriptFile]
             );
 
+            @unlink($scriptFile);
+
             if (!is_numeric($loadResult)) {
-                return "Failed to load script: $loadResult";
+                return "Failed to load script: {$loadResult}";
             }
 
-            $scriptPath = "/Scripting/Script$loadResult";
+            $scriptPath = "/Scripting/Script{$loadResult}";
             qdbus_call('org.kde.KWin', $scriptPath, 'org.kde.kwin.Script.run');
             usleep(100000);
             qdbus_call('org.kde.KWin', $scriptPath, 'org.kde.kwin.Script.stop');
 
-            $wmctrlOutput = shell_exec('wmctrl -l -p 2>/dev/null') ?? '';
-            if ($wmctrlOutput) {
-                return "Windows (via wmctrl):\n$wmctrlOutput";
+            $wmctrl = appmesh_exec('wmctrl -l -p', false);
+            if ($wmctrl['success'] && $wmctrl['output']) {
+                return "Windows (via wmctrl):\n{$wmctrl['output']}";
             }
 
-            $kdotoolOutput = shell_exec('kdotool search --name "." 2>/dev/null') ?? '';
-            if ($kdotoolOutput) {
-                return "Window IDs:\n$kdotoolOutput";
+            $kdotool = appmesh_exec('kdotool search --name "."', false);
+            if ($kdotool['success'] && $kdotool['output']) {
+                return "Window IDs:\n{$kdotool['output']}";
             }
 
-            return "Script loaded (id: $loadResult). Window listing requires wmctrl or kdotool for reliable output.";
+            return "Script loaded (id: {$loadResult}). Window listing requires wmctrl or kdotool for reliable output.";
         }
     ),
 
@@ -210,32 +216,40 @@ return [
             ['window_id']
         ),
         handler: function (array $args): string {
-            $windowId = $args['window_id'] ?? '';
-
-            if (is_numeric($windowId)) {
-                $result = shell_exec("kdotool windowactivate $windowId 2>&1") ?? '';
-                if ($result === '' || str_contains(strtolower($result), 'success')) {
-                    return "Activated window: $windowId";
-                }
-                $result2 = shell_exec("wmctrl -i -a $windowId 2>&1") ?? '';
-                return "Activation attempted. kdotool: $result, wmctrl: $result2";
+            if ($error = appmesh_validate($args, ['window_id'])) {
+                return "Error: {$error}";
             }
 
-            $script = "workspace.windowList().find(w => w.internalId.toString() === '$windowId')?.activate();";
-            $scriptFile = '/tmp/appmesh_activate.js';
+            $windowId = $args['window_id'];
+
+            if (is_numeric($windowId)) {
+                $result = appmesh_exec("kdotool windowactivate " . escapeshellarg($windowId));
+                if ($result['success']) {
+                    return "Activated window: {$windowId}";
+                }
+
+                $result2 = appmesh_exec("wmctrl -i -a " . escapeshellarg($windowId));
+                return "Activation attempted. kdotool: {$result['output']}, wmctrl: {$result2['output']}";
+            }
+
+            // Escape the windowId for JavaScript (it's a UUID string)
+            $escapedId = json_encode($windowId);
+            $script = "workspace.windowList().find(w => w.internalId.toString() === {$escapedId})?.activate();";
+            $scriptFile = appmesh_tempfile('kwin_activate', 'js');
             file_put_contents($scriptFile, $script);
 
             $loadResult = qdbus_call('org.kde.KWin', '/Scripting', 'org.kde.kwin.Scripting.loadScript', [$scriptFile]);
+            @unlink($scriptFile);
 
             if (is_numeric($loadResult)) {
-                $scriptPath = "/Scripting/Script$loadResult";
+                $scriptPath = "/Scripting/Script{$loadResult}";
                 qdbus_call('org.kde.KWin', $scriptPath, 'org.kde.kwin.Script.run');
                 usleep(50000);
                 qdbus_call('org.kde.KWin', $scriptPath, 'org.kde.kwin.Script.stop');
-                return "Activated window: $windowId";
+                return "Activated window: {$windowId}";
             }
 
-            return "Failed to activate window: $windowId";
+            return "Failed to activate window: {$windowId}";
         }
     ),
 ];

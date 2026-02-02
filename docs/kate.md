@@ -1,5 +1,7 @@
 # Kate D-Bus Integration
 
+> **See also**: For richer text I/O, consider **Konsole** which can both read AND write terminal text via D-Bus (requires enabling in settings).
+
 D-Bus service: `org.kde.kate-{PID}` (PID-specific, find with `qdbus6 | grep kate`)
 
 ## Key Object Paths
@@ -226,6 +228,50 @@ dbus-monitor "interface='org.kde.Kate.Application',member='documentClosed'"
 # Monitor Kate exit
 dbus-monitor "interface='org.kde.Kate.Application',member='exiting'"
 ```
+
+---
+
+## What Works via D-Bus
+
+| Feature | Status | Method |
+|---------|--------|--------|
+| Open file | ✅ | `openUrl()` |
+| Open text directly | ✅ | `openInput()` - no file needed! |
+| Open at line/column | ✅ | `tokenOpenUrlAt()` |
+| Move cursor | ✅ | `setCursor()` |
+| Bring to front | ✅ | `activate()` |
+| Session management | ✅ | `activateSession()` |
+| Trigger menu actions | ✅ | `activateAction()` |
+| Window control | ✅ | show/hide/minimize/maximize |
+| Split views | ✅ | via actions |
+| Tab navigation | ✅ | via actions |
+
+## Limitations - What DOESN'T Work
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Get document content | ❌ | Cannot read current text |
+| Set/replace text | ❌ | No text manipulation |
+| Text selection | ❌ | Cannot select programmatically |
+| Copy/paste in document | ❌ | No clipboard ops on content |
+| Find/replace | ❌ | No search functionality |
+| Undo/redo | ❌ | No edit history control |
+| Change syntax highlighting | ❌ | Not exposed |
+| Get cursor position | ❌ | Only set, not get |
+
+### Why These Limitations?
+
+Kate uses **KTextEditor** framework internally which has rich APIs for text manipulation, but these are **not exposed via D-Bus**. The D-Bus interface focuses on:
+- Document/file operations
+- Navigation and positioning
+- Window and session management
+
+### Workarounds
+
+1. **Inject content**: Use `openInput()` to create document from text
+2. **File-based**: Write to temp file, then `openUrl()`
+3. **Clipboard bridge**: Use Klipper + keyboard simulation
+4. **Kate plugins**: For deep integration, write a Kate plugin
 
 ---
 

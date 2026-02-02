@@ -31,7 +31,7 @@ qdbus6 org.kde.kmail2 /KMail org.kde.kmail.kmail.openComposer \
 - `body` - Email body text
 - `hidden` - If true, composer stays hidden (for automation)
 
-**Extended version with attachments:**
+**Extended version with attachments and identity:**
 ```bash
 qdbus6 org.kde.kmail2 /KMail org.kde.kmail.kmail.openComposer \
     "to@example.com" "" "" "Subject" "Body" \
@@ -39,8 +39,53 @@ qdbus6 org.kde.kmail2 /KMail org.kde.kmail.kmail.openComposer \
     "" \
     "['/path/to/attachment.pdf']" \
     "[]" \
-    "" "" ""
+    "" "" "344442307" "false"
 ```
+
+**Full parameter list:**
+| # | Parameter | Description |
+|---|-----------|-------------|
+| 1 | to | Recipient email address |
+| 2 | cc | CC recipients |
+| 3 | bcc | BCC recipients |
+| 4 | subject | Email subject line |
+| 5 | body | Email body text |
+| 6 | hidden | If "true", composer stays hidden |
+| 7 | messageFile | Path to .eml file to use as template |
+| 8 | attachmentPaths | JSON array of attachment paths |
+| 9 | customHeaders | JSON array of custom headers |
+| 10 | replyTo | Reply-To address |
+| 11 | inReplyTo | Message-ID being replied to |
+| 12 | identity | Identity uoid (from ~/.config/emailidentities) |
+| 13 | htmlBody | If "true", body is HTML |
+
+### Setting the "From" Identity
+
+Identities are configured in `~/.config/emailidentities`. Each identity has a `uoid` (unique object ID).
+
+**Find your identity uoid:**
+```bash
+grep -E '^\[Identity|^Email Address=|^uoid=' ~/.config/emailidentities
+```
+
+**Example output:**
+```
+[Identity #0]
+Email Address=mc@motd.com
+uoid=344442307
+[Identity #1]
+Email Address=markc@renta.net
+uoid=987654321
+```
+
+**Open composer with specific identity:**
+```bash
+qdbus6 org.kde.kmail2 /KMail org.kde.kmail.kmail.openComposer \
+    "recipient@example.com" "" "" "Subject" "Body" \
+    "false" "" "[]" "[]" "" "" "987654321" "false"
+```
+
+**Note:** To add a new identity, use KMail: Settings → Configure KMail → Identities → Add.
 
 ### Check Mail
 

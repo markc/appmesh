@@ -32,7 +32,9 @@ qt_add_qml_module(appmesh-app
 target_link_libraries(appmesh-app PRIVATE Qt6::Core Qt6::Qml Qt6::Quick)
 
 # --- Install targets ---
-set(QML_INSTALL_DIR "$ENV{HOME}/.local/lib/qt6/qml/AppMesh")
+# Query Qt for the system QML path so plasmawindowed/plasmashell can find the module
+execute_process(COMMAND qmake6 -query QT_INSTALL_QML OUTPUT_VARIABLE QT_QML_DIR OUTPUT_STRIP_TRAILING_WHITESPACE)
+set(QML_INSTALL_DIR "${QT_QML_DIR}/AppMesh")
 set(PLASMOID_INSTALL_DIR "$ENV{HOME}/.local/share/plasma/plasmoids")
 
 install(

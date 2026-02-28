@@ -5,6 +5,8 @@ use std::os::raw::c_char;
 use crate::input::InputHandle;
 use crate::port::AppMeshPort;
 use crate::ports::input::InputPort;
+use crate::ports::clipboard::ClipboardPort;
+use crate::ports::windows::WindowsPort;
 
 /// Opaque handle type for C ABI.
 pub type AppmeshHandle = *mut InputHandle;
@@ -93,7 +95,7 @@ pub extern "C" fn appmesh_free(handle: AppmeshHandle) {
 // Port-level FFI — generic ARexx-style command dispatch
 // ============================================================================
 
-/// Open a port by name. Currently supported: "input".
+/// Open a port by name. Supported: "input", "clipboard", "windows".
 ///
 /// Returns opaque port handle on success, null on failure.
 #[no_mangle]
@@ -111,6 +113,20 @@ pub extern "C" fn appmesh_port_open(name: *const c_char) -> AppmeshPortHandle {
             Ok(p) => Box::new(p),
             Err(e) => {
                 eprintln!("appmesh_port_open(input) failed: {}", e);
+                return std::ptr::null_mut();
+            }
+        },
+        "clipboard" => match ClipboardPort::new() {
+            Ok(p) => Box::new(p),
+            Err(e) => {
+                eprintln!("appmesh_port_open(clipboard) failed: {}", e);
+                return std::ptr::null_mut();
+            }
+        },
+        "windows" => match WindowsPort::new() {
+            Ok(p) => Box::new(p),
+            Err(e) => {
+                eprintln!("appmesh_port_open(windows) failed: {}", e);
                 return std::ptr::null_mut();
             }
         },

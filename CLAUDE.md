@@ -13,13 +13,17 @@ Desktop automation through application mesh networking - the modern successor to
 
 ```
 ~/Dev/appmesh/
+├── _journal/               # Development log (dated entries)
 ├── .claude/                # Claude Code integration
 │   ├── skills/             # Invocable skills (dbus, osc, tts, cdp, midi, ws)
 │   ├── runbooks/           # Operational procedures
 │   ├── docs/               # Architecture documentation
-│   ├── guidelines/         # Development standards
-│   └── journal/            # Development log
+│   └── guidelines/         # Development standards
 ├── .mcp.json               # MCP server configuration
+├── Cargo.toml              # Rust workspace root
+├── crates/                 # Rust crates
+│   ├── appmesh-core/       # Library (cdylib+rlib) → libappmesh_core.so
+│   └── appmesh-cli/        # CLI binary: appmesh type/key
 ├── docs/                   # Application D-Bus documentation
 │   ├── kmail.md            # KMail/Akonadi interface
 │   ├── okular.md           # Okular PDF viewer
@@ -27,6 +31,7 @@ Desktop automation through application mesh networking - the modern successor to
 ├── server/                 # MCP server code
 │   ├── appmesh-mcp.php     # Entry point
 │   ├── appmesh-core.php    # Shared core (Tool class, registry)
+│   ├── appmesh-ffi.php     # PHP FFI bridge to libappmesh_core.so
 │   └── plugins/            # Protocol plugins
 │       ├── dbus.php        # D-Bus tools (8 tools)
 │       ├── osc.php         # OSC tools (3 tools)
@@ -242,4 +247,4 @@ Fractional scaling (2.25x, 2.5x) can cause font rendering issues in Qt WebEngine
 
 ## Development Journal
 
-Work history is tracked in `.claude/journal/`. Check for context from previous sessions.
+Work history is tracked in `_journal/` (dated entries). Check for context from previous sessions.

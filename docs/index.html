@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="AppMesh - Desktop automation through application mesh networking. The modern successor to ARexx.">
+    <title>AppMesh - Desktop Automation Mesh</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+            --bg: #0d1117; --surface: #161b22; --border: #30363d;
+            --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+            --green: #3fb950; --purple: #bc8cff;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg); color: var(--text);
+            line-height: 1.6; min-height: 100vh;
+        }
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .container { max-width: 880px; margin: 0 auto; padding: 0 1.5rem; }
+
+        /* Hero */
+        .hero {
+            padding: 5rem 0 3rem; text-align: center;
+            background: linear-gradient(180deg, #0d1117 0%, #111820 100%);
+        }
+        .hero h1 { font-size: clamp(2rem, 5vw, 3.2rem); font-weight: 700; margin-bottom: 0.5rem; }
+        .hero h1 span { color: var(--accent); }
+        .hero .tagline { font-size: 1.2rem; color: var(--muted); max-width: 600px; margin: 0 auto 2rem; }
+        .hero .badge {
+            display: inline-block; padding: 0.25rem 0.75rem; border-radius: 2rem;
+            background: rgba(88, 166, 255, 0.1); border: 1px solid rgba(88, 166, 255, 0.3);
+            color: var(--accent); font-size: 0.85rem; margin-bottom: 1.5rem;
+        }
+        .cta { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+        .cta a {
+            padding: 0.6rem 1.5rem; border-radius: 0.5rem; font-weight: 500; font-size: 0.95rem;
+            transition: opacity 0.2s;
+        }
+        .cta a:hover { text-decoration: none; opacity: 0.85; }
+        .cta .primary { background: var(--accent); color: var(--bg); }
+        .cta .secondary { border: 1px solid var(--border); color: var(--text); }
+
+        /* Sections */
+        section { padding: 3rem 0; }
+        section h2 { font-size: 1.6rem; margin-bottom: 0.5rem; }
+        section .subtitle { color: var(--muted); margin-bottom: 2rem; }
+
+        /* Cards */
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; }
+        .card {
+            background: var(--surface); border: 1px solid var(--border); border-radius: 0.5rem;
+            padding: 1.5rem;
+        }
+        .card h3 { font-size: 1rem; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem; }
+        .card .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+        .card p, .card li { color: var(--muted); font-size: 0.9rem; }
+        .card ul { list-style: none; }
+        .card ul li::before { content: "- "; color: var(--border); }
+
+        /* Equivalence table */
+        .equiv { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; }
+        .equiv th { text-align: left; padding: 0.5rem 1rem; border-bottom: 2px solid var(--border); color: var(--muted); font-weight: 500; }
+        .equiv td { padding: 0.5rem 1rem; border-bottom: 1px solid var(--border); }
+        .equiv code { background: var(--surface); padding: 0.15rem 0.4rem; border-radius: 0.25rem; font-size: 0.85rem; }
+
+        /* Code block */
+        pre {
+            background: var(--surface); border: 1px solid var(--border); border-radius: 0.5rem;
+            padding: 1.25rem; overflow-x: auto; font-size: 0.85rem; line-height: 1.7;
+        }
+        code { font-family: 'SF Mono', Consolas, 'Liberation Mono', Menlo, monospace; }
+        .kw { color: var(--purple); } .fn { color: var(--accent); } .str { color: var(--green); } .cmt { color: var(--muted); }
+
+        /* Stats */
+        .stats { display: flex; gap: 2rem; flex-wrap: wrap; margin: 1.5rem 0; }
+        .stat { text-align: center; }
+        .stat .num { font-size: 2rem; font-weight: 700; color: var(--accent); }
+        .stat .label { font-size: 0.85rem; color: var(--muted); }
+
+        /* Address */
+        .addr {
+            background: var(--surface); border: 1px solid var(--border); border-radius: 0.5rem;
+            padding: 1.25rem; font-family: monospace; font-size: 0.9rem; line-height: 2;
+        }
+        .addr .dim { color: var(--muted); }
+        .addr .hi { color: var(--accent); }
+
+        /* Footer */
+        footer {
+            border-top: 1px solid var(--border); padding: 2rem 0; margin-top: 2rem;
+            text-align: center; color: var(--muted); font-size: 0.85rem;
+        }
+    </style>
+</head>
+<body>
+
+<div class="hero">
+    <div class="container">
+        <div class="badge">AMP v0.2.0 - AppMesh Protocol</div>
+        <h1><span>App</span>Mesh</h1>
+        <p class="tagline">Desktop automation through application mesh networking &mdash; the modern successor to ARexx. Every app becomes a scriptable service.</p>
+        <div class="cta">
+            <a href="https://github.com/markc/appmesh" class="primary">GitHub</a>
+            <a href="https://github.com/markc/appmesh/blob/main/AMP-AppMesh-Protocol-Specification.md" class="secondary">AMP Spec</a>
+        </div>
+    </div>
+</div>
+
+<div class="container">
+
+    <section>
+        <h2>The ARexx Principle</h2>
+        <p class="subtitle">On the Amiga, every serious app had an ARexx port. AppMesh brings that to modern Linux.</p>
+        <table class="equiv">
+            <thead><tr><th>Amiga / ARexx</th><th>AMP</th></tr></thead>
+            <tbody>
+                <tr><td><code>ADDRESS 'APP' 'CMD'</code></td><td><code>appmesh port clipboard get</code></td></tr>
+                <tr><td>ARexx port name</td><td>DNS address: <code>clipboard.appmesh.cachyos.amp</code></td></tr>
+                <tr><td><code>rx script.rexx</code></td><td><code>amp run script.amp.php</code></td></tr>
+                <tr><td>REXX (universal glue)</td><td>PHP 8.5+ (universal glue)</td></tr>
+                <tr><td>Single machine IPC</td><td>Multi-node mesh (WireGuard + DNS)</td></tr>
+            </tbody>
+        </table>
+    </section>
+
+    <section>
+        <h2>What Exists Today</h2>
+        <p class="subtitle">Working code, not a roadmap.</p>
+        <div class="stats">
+            <div class="stat"><div class="num">5</div><div class="label">Rust Ports</div></div>
+            <div class="stat"><div class="num">56</div><div class="label">MCP Tools</div></div>
+            <div class="stat"><div class="num">10</div><div class="label">Plugins</div></div>
+            <div class="stat"><div class="num">2</div><div class="label">Plasmoids</div></div>
+            <div class="stat"><div class="num">3</div><div class="label">Mesh Nodes</div></div>
+        </div>
+        <div class="grid">
+            <div class="card">
+                <h3><span class="dot" style="background:var(--green)"></span> Rust Core</h3>
+                <ul>
+                    <li><code>libappmesh_core.so</code> &mdash; 8 C ABI symbols</li>
+                    <li><code>AppMeshPort</code> trait (ARexx-style)</li>
+                    <li>Ports: input, clipboard, notify, screenshot, windows</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3><span class="dot" style="background:var(--purple)"></span> PHP MCP Server</h3>
+                <ul>
+                    <li>10 plugins, 56 tools for Claude Code</li>
+                    <li>D-Bus, OSC, TTS, CDP, MIDI, WebSocket, KConfig</li>
+                    <li><code>AppMeshFFI</code> &mdash; PHP FFI bridge (~0.05ms)</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3><span class="dot" style="background:var(--accent)"></span> QML + Plasmoids</h3>
+                <ul>
+                    <li><code>AppMeshBridge</code> singleton (dlopen)</li>
+                    <li>Mesh Send + Mesh Log widgets</li>
+                    <li>Inter-plasmoid pub/sub via signals</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3><span class="dot" style="background:#f0883e"></span> CLI + Web</h3>
+                <ul>
+                    <li><code>appmesh type|key|port|ports</code></li>
+                    <li>HTMX + SSE web UI at localhost:8420</li>
+                    <li>Real-time D-Bus signal streaming</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <h2>DNS-Native Addressing</h2>
+        <p class="subtitle"><code>[port].[app].[node].amp</code> &mdash; maps directly to DNS hierarchy.</p>
+        <div class="addr">
+            <span class="hi">clipboard</span>.<span class="dim">appmesh.cachyos.amp</span> &rarr; clipboard port, local node<br>
+            <span class="hi">dns</span>.<span class="dim">netserva.mko.amp</span> &rarr; DNS service on staging<br>
+            <span class="hi">compose</span>.<span class="dim">laramail.mmc.amp</span> &rarr; compose on production<br>
+            <span class="hi">inbox</span>.<span class="dim">stalwart.mko.amp</span> &rarr; mail on staging
+        </div>
+    </section>
+
+    <section>
+        <h2>The Stack</h2>
+        <p class="subtitle">PHP is to AMP what REXX was to the Amiga.</p>
+        <pre><code><span class="cmt">// screenshot-and-notify.amp.php</span>
+<span class="kw">$mesh</span> = <span class="fn">AppMeshFFI::instance</span>();
+
+<span class="kw">$shot</span> = <span class="kw">$mesh</span>-><span class="fn">portExecute</span>(<span class="str">'screenshot'</span>, <span class="str">'take'</span>);
+<span class="kw">$path</span> = <span class="kw">$shot</span>[<span class="str">'ok'</span>][<span class="str">'path'</span>];
+
+<span class="kw">$mesh</span>-><span class="fn">portExecute</span>(<span class="str">'clipboard'</span>, <span class="str">'set'</span>, [<span class="str">'text'</span> => <span class="kw">$path</span>]);
+<span class="kw">$mesh</span>-><span class="fn">portExecute</span>(<span class="str">'notify'</span>, <span class="str">'send'</span>, [
+    <span class="str">'title'</span> => <span class="str">'Screenshot saved'</span>,
+    <span class="str">'body'</span>  => <span class="kw">$path</span>,
+]);</code></pre>
+    </section>
+
+    <section>
+        <h2>Transport Layers</h2>
+        <p class="subtitle">Callers address ports, not transports.</p>
+        <table class="equiv">
+            <thead><tr><th>Channel</th><th>Path</th><th>Latency</th></tr></thead>
+            <tbody>
+                <tr><td>PHP FFI</td><td>PHP &rarr; libappmesh_core.so &rarr; KDE</td><td>~0.05ms</td></tr>
+                <tr><td>D-Bus</td><td>subprocess &rarr; dbus-daemon &rarr; apps</td><td>~1ms</td></tr>
+                <tr><td>Unix socket</td><td>PHP &harr; Rust daemon (streaming)</td><td>~0.1ms est.</td></tr>
+                <tr><td>WebSocket/WG</td><td>Browser &rarr; Reverb &rarr; PHP &rarr; Rust</td><td>~2ms est.</td></tr>
+            </tbody>
+        </table>
+    </section>
+
+</div>
+
+<footer>
+    <div class="container">
+        <p>&copy; 2026 Mark Constable. <a href="https://github.com/markc/appmesh">github.com/markc/appmesh</a></p>
+    </div>
+</footer>
+
+</body>
+</html>

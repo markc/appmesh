@@ -4,21 +4,35 @@ use std::os::raw::c_char;
 
 use crate::input::InputHandle;
 use crate::port::AppMeshPort;
-use crate::ports::input::InputPort;
 use crate::ports::clipboard::ClipboardPort;
+use crate::ports::input::InputPort;
 use crate::ports::notify::NotifyPort;
+use crate::ports::screenshot::ScreenshotPort;
 use crate::ports::windows::WindowsPort;
 
-/// Opaque handle type for C ABI.
-pub type AppmeshHandle = *mut InputHandle;
+/// All available port names.
+pub const PORT_NAMES: &[&str] = &["clipboard", "input", "notify", "screenshot", "windows"];
 
-/// Opaque port handle for C ABI.
+/// Open a port by name. Returns the port or an error message.
+pub fn open_port(name: &str) -> Result<Box<dyn AppMeshPort>, String> {
+    match name {
+        "clipboard" => ClipboardPort::new().map(|p| Box::new(p) as Box<dyn AppMeshPort>),
+        "input" => InputPort::new().map(|p| Box::new(p) as Box<dyn AppMeshPort>),
+        "notify" => NotifyPort::new().map(|p| Box::new(p) as Box<dyn AppMeshPort>),
+        "screenshot" => ScreenshotPort::new().map(|p| Box::new(p) as Box<dyn AppMeshPort>),
+        "windows" => WindowsPort::new().map(|p| Box::new(p) as Box<dyn AppMeshPort>),
+        _ => return Err(format!("unknown port: {}", name)),
+    }
+    .map_err(|e| e.to_string())
+}
+
+// ============================================================================
+// Input handle FFI (direct keyboard injection)
+// ============================================================================
+
+pub type AppmeshHandle = *mut InputHandle;
 pub type AppmeshPortHandle = *mut Box<dyn AppMeshPort>;
 
-/// Initialize an AppMesh input handle by connecting to KWin EIS.
-///
-/// Returns an opaque handle on success, null on failure.
-/// The handle must be freed with `appmesh_free()`.
 #[no_mangle]
 pub extern "C" fn appmesh_init() -> AppmeshHandle {
     match InputHandle::new() {
@@ -30,8 +44,6 @@ pub extern "C" fn appmesh_init() -> AppmeshHandle {
     }
 }
 
-/// Type text into the focused window.
-///
 /// Returns: 0 = success, -1 = error, -2 = null handle.
 #[no_mangle]
 pub extern "C" fn appmesh_type_text(
@@ -56,8 +68,6 @@ pub extern "C" fn appmesh_type_text(
     }
 }
 
-/// Send a key combo to the focused window (e.g. "ctrl+v", "enter").
-///
 /// Returns: 0 = success, -1 = error, -2 = null handle.
 #[no_mangle]
 pub extern "C" fn appmesh_send_key(
@@ -82,13 +92,10 @@ pub extern "C" fn appmesh_send_key(
     }
 }
 
-/// Free an AppMesh handle. Safe to call with null.
 #[no_mangle]
 pub extern "C" fn appmesh_free(handle: AppmeshHandle) {
     if !handle.is_null() {
-        unsafe {
-            drop(Box::from_raw(handle));
-        }
+        unsafe { drop(Box::from_raw(handle)); }
     }
 }
 
@@ -96,9 +103,6 @@ pub extern "C" fn appmesh_free(handle: AppmeshHandle) {
 // Port-level FFI — generic ARexx-style command dispatch
 // ============================================================================
 
-/// Open a port by name. Supported: "input", "clipboard", "windows".
-///
-/// Returns opaque port handle on success, null on failure.
 #[no_mangle]
 pub extern "C" fn appmesh_port_open(name: *const c_char) -> AppmeshPortHandle {
     if name.is_null() {
@@ -109,48 +113,15 @@ pub extern "C" fn appmesh_port_open(name: *const c_char) -> AppmeshPortHandle {
         Err(_) => return std::ptr::null_mut(),
     };
 
-    let port: Box<dyn AppMeshPort> = match name {
-        "input" => match InputPort::new() {
-            Ok(p) => Box::new(p),
-            Err(e) => {
-                eprintln!("appmesh_port_open(input) failed: {}", e);
-                return std::ptr::null_mut();
-            }
-        },
-        "clipboard" => match ClipboardPort::new() {
-            Ok(p) => Box::new(p),
-            Err(e) => {
-                eprintln!("appmesh_port_open(clipboard) failed: {}", e);
-                return std::ptr::null_mut();
-            }
-        },
-        "notify" => match NotifyPort::new() {
-            Ok(p) => Box::new(p),
-            Err(e) => {
-                eprintln!("appmesh_port_open(notify) failed: {}", e);
-                return std::ptr::null_mut();
-            }
-        },
-        "windows" => match WindowsPort::new() {
-            Ok(p) => Box::new(p),
-            Err(e) => {
-                eprintln!("appmesh_port_open(windows) failed: {}", e);
-                return std::ptr::null_mut();
-            }
-        },
-        _ => {
-            eprintln!("appmesh_port_open: unknown port '{}'", name);
-            return std::ptr::null_mut();
+    match open_port(name) {
+        Ok(port) => Box::into_raw(Box::new(port)),
+        Err(e) => {
+            eprintln!("appmesh_port_open({}) failed: {}", name, e);
+            std::ptr::null_mut()
         }
-    };
-
-    Box::into_raw(Box::new(port))
+    }
 }
 
-/// Execute a command on a port. Args and result are JSON strings.
-///
-/// Returns a JSON string (caller must free with `appmesh_string_free`),
-/// or null on error.
 #[no_mangle]
 pub extern "C" fn appmesh_port_execute(
     port: AppmeshPortHandle,
@@ -188,22 +159,16 @@ pub extern "C" fn appmesh_port_execute(
     }
 }
 
-/// Free a port handle. Safe to call with null.
 #[no_mangle]
 pub extern "C" fn appmesh_port_free(port: AppmeshPortHandle) {
     if !port.is_null() {
-        unsafe {
-            drop(Box::from_raw(port));
-        }
+        unsafe { drop(Box::from_raw(port)); }
     }
 }
 
-/// Free a string returned by `appmesh_port_execute`. Safe to call with null.
 #[no_mangle]
 pub extern "C" fn appmesh_string_free(s: *mut c_char) {
     if !s.is_null() {
-        unsafe {
-            drop(CString::from_raw(s));
-        }
+        unsafe { drop(CString::from_raw(s)); }
     }
 }

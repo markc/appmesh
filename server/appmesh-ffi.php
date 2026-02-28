@@ -99,6 +99,31 @@ final class AppMeshFFI
     }
 
     /**
+     * Open a named port and execute a command with JSON args.
+     * Returns decoded result array on success, null on failure.
+     */
+    public function portExecute(string $port, string $command, array $args = []): ?array
+    {
+        $portHandle = $this->ffi->appmesh_port_open($port);
+        if ($portHandle === null) {
+            return null;
+        }
+
+        $argsJson = empty($args) ? null : json_encode($args);
+        $resultPtr = $this->ffi->appmesh_port_execute($portHandle, $command, $argsJson);
+        $this->ffi->appmesh_port_free($portHandle);
+
+        if ($resultPtr === null) {
+            return null;
+        }
+
+        $json = \FFI::string($resultPtr);
+        $this->ffi->appmesh_string_free($resultPtr);
+
+        return json_decode($json, true);
+    }
+
+    /**
      * Destroy the handle and mark instance as unavailable.
      */
     private function destroy(): void

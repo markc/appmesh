@@ -6,6 +6,7 @@ use crate::input::InputHandle;
 use crate::port::AppMeshPort;
 use crate::ports::input::InputPort;
 use crate::ports::clipboard::ClipboardPort;
+use crate::ports::notify::NotifyPort;
 use crate::ports::windows::WindowsPort;
 
 /// Opaque handle type for C ABI.
@@ -120,6 +121,13 @@ pub extern "C" fn appmesh_port_open(name: *const c_char) -> AppmeshPortHandle {
             Ok(p) => Box::new(p),
             Err(e) => {
                 eprintln!("appmesh_port_open(clipboard) failed: {}", e);
+                return std::ptr::null_mut();
+            }
+        },
+        "notify" => match NotifyPort::new() {
+            Ok(p) => Box::new(p),
+            Err(e) => {
+                eprintln!("appmesh_port_open(notify) failed: {}", e);
                 return std::ptr::null_mut();
             }
         },

@@ -185,7 +185,24 @@ inbox.stalwart.mko.amp          → inbox on Stalwart mail on mko
 
 AMP messages use **markdown frontmatter** as the wire format — `---` delimited headers with an optional freeform body. The encoding is **8-bit UTF-8**. Every AMP message is a valid `.amp.md` file, readable by humans, `cat`-able, `grep`-able, and renderable by any markdown tool.
 
-### 4.1 The Three Shapes
+### 4.1 Grammar
+
+```
+message = "---\n" headers "---\n" body
+headers = *(key ": " value "\n")
+body    = *UTF-8  (may be empty)
+```
+
+Every message begins with `---\n` and the header block ends with `---\n`. The trailing `\n` after the closing `---` is mandatory — it makes framing unambiguous on a byte stream (the reader knows the message is complete).
+
+**The empty message** — `---\n---\n` (8 bytes) — is the smallest valid AMP message. No headers, no body, but valid and useful:
+
+- **Heartbeat/keepalive** — "I'm still here" on a persistent connection
+- **ACK** — "message received" (context implied by the channel)
+- **Stream separator** — boundary marker between logical groups of data messages
+- **NOP** — do nothing, but keep the connection alive and prove the parser is working
+
+### 4.2 The Three Shapes
 
 One format, one parser, three message shapes:
 
@@ -194,10 +211,11 @@ One format, one parser, three message shapes:
 | **Full message** | Headers + markdown/text body | Events, rich responses, notifications |
 | **Command** | Headers only (including `args:`), no body | Requests, acks, simple responses |
 | **Data** | Minimal `json:` header, no body needed | High-throughput streams, structured payloads |
+| **Empty** | No headers, no body (`---\n---\n`) | Heartbeat, ACK, NOP, stream separator |
 
 All three are delimited by `---` and parsed identically. The presence of `json:`, `args:`, or a body determines the shape — not a mode flag.
 
-### 4.2 Format
+### 4.3 Format
 
 Headers are flat `key: value` lines between `---` delimiters. Two special keys carry inline JSON: `args` (command arguments) and `json` (self-contained data payload). Everything after the closing `---` is the body — freeform content (markdown, JSON, plain text, or empty).
 
@@ -249,7 +267,7 @@ json: {"count": 12, "unread": 3}
 ---
 ```
 
-### 4.3 Header Fields
+### 4.4 Header Fields
 
 | Field | Required | Description |
 |---|---|---|
@@ -268,7 +286,7 @@ json: {"count": 12, "unread": 3}
 
 \* Required for full messages and commands. Data-only messages (`json:` shape) may omit routing headers when the transport already provides context (e.g., an established WebSocket channel or Unix socket session).
 
-### 4.4 More Examples
+### 4.5 More Examples
 
 **Request with no args:**
 
@@ -310,7 +328,7 @@ json: {"level": 0.68, "peak": 0.85, "channel": "right"}
 ---
 ```
 
-### 4.5 Parsing
+### 4.6 Parsing
 
 Headers are flat `key: value` strings — no YAML parser needed. Two keys (`args` and `json`) carry inline JSON, decoded with `json_decode` / `serde_json`. The parser is identical for all three shapes.
 
@@ -351,7 +369,7 @@ fn amp_parse(raw: &str) -> (HashMap<&str, &str>, &str) {
 }
 ```
 
-### 4.6 Design Rationale
+### 4.7 Design Rationale
 
 The `---` frontmatter format is borrowed from the markdown ecosystem (Hugo, Jekyll, Statamic) where it is universally understood. AMP frontmatter *looks like* YAML but is intentionally restricted to flat `key: value` lines — no indentation, no nesting, no type coercion surprises. The `args` and `json` fields use inline JSON because both PHP and Rust already have JSON parsers (`json_decode`, `serde_json`) with zero additional dependencies.
 

@@ -10,11 +10,16 @@ ApplicationWindow {
     visible: true
     title: "AppMesh Test"
 
-    AppMeshBridge { id: mesh }
-
     function exec(port, cmd, args) {
-        let result = mesh.portExecute(port, cmd, args || {})
+        let result = AppMeshBridge.portExecute(port, cmd, args || {})
         output.text = JSON.stringify(result, null, 2)
+    }
+
+    Connections {
+        target: AppMeshBridge
+        function onMeshMessage(channel, data) {
+            msgLog.append(Qt.formatTime(new Date(), "HH:mm:ss") + " [" + channel + "] " + data)
+        }
     }
 
     ScrollView {
@@ -27,13 +32,46 @@ ApplicationWindow {
 
             // Status
             Label {
-                text: mesh.available
-                    ? "Library loaded — ports: " + mesh.ports.join(", ")
+                text: AppMeshBridge.available
+                    ? "Library loaded — ports: " + AppMeshBridge.ports.join(", ")
                     : "Library NOT loaded"
-                color: mesh.available ? "green" : "red"
+                color: AppMeshBridge.available ? "green" : "red"
                 font.bold: true
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap
+            }
+
+            // Messaging
+            GroupBox {
+                title: "Mesh Messaging"
+                Layout.fillWidth: true
+                ColumnLayout {
+                    anchors.fill: parent
+                    TextField { id: msgText; placeholderText: "Message"; text: "Hello mesh!"; Layout.fillWidth: true }
+                    RowLayout {
+                        Button {
+                            text: "Broadcast"
+                            onClicked: AppMeshBridge.sendMessage("chat", msgText.text)
+                        }
+                        Button {
+                            text: "Notify + Broadcast"
+                            onClicked: {
+                                root.exec("notify", "send", { summary: "AppMesh", body: msgText.text })
+                                AppMeshBridge.sendMessage("chat", msgText.text)
+                            }
+                        }
+                    }
+                    TextArea {
+                        id: msgLog
+                        readOnly: true
+                        wrapMode: TextArea.Wrap
+                        Layout.fillWidth: true
+                        Layout.minimumHeight: 80
+                        font.family: "monospace"
+                        font.pointSize: 9
+                        placeholderText: "Messages will appear here..."
+                    }
+                }
             }
 
             // Notify

@@ -20,6 +20,7 @@ class AppMeshBridge : public QObject
 {
     Q_OBJECT
     QML_ELEMENT
+    QML_SINGLETON
 
     Q_PROPERTY(bool available READ available CONSTANT)
     Q_PROPERTY(QStringList ports READ ports CONSTANT)
@@ -33,6 +34,10 @@ public:
 
     Q_INVOKABLE QVariantMap portExecute(const QString &port, const QString &cmd,
                                         const QVariantMap &args = {});
+    Q_INVOKABLE void sendMessage(const QString &channel, const QString &data);
+
+signals:
+    void meshMessage(const QString &channel, const QString &data);
 
 private:
     void *m_handle = nullptr; // dlopen handle

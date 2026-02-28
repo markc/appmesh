@@ -2,7 +2,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QDir>
-#include <QStandardPaths>
 #include <cstdlib>
 
 static void *tryLoad(const QString &path)
@@ -21,7 +20,7 @@ AppMeshBridge::AppMeshBridge(QObject *parent)
     if (const char *env = std::getenv("APPMESH_LIB_PATH"))
         candidates << QString::fromUtf8(env);
 
-    candidates << QDir::cleanPath(QStringLiteral(CMAKE_SOURCE_DIR) + QStringLiteral("/../target/release/libappmesh_core.so"))
+    candidates << QDir::homePath() + QStringLiteral("/.gh/appmesh/target/release/libappmesh_core.so")
                << QDir::homePath() + QStringLiteral("/.local/lib/libappmesh_core.so")
                << QStringLiteral("/usr/local/lib/libappmesh_core.so");
 
@@ -96,4 +95,9 @@ QVariantMap AppMeshBridge::portExecute(const QString &port, const QString &cmd,
         return {{QStringLiteral("error"), QStringLiteral("Invalid JSON from port")}};
 
     return resultDoc.object().toVariantMap();
+}
+
+void AppMeshBridge::sendMessage(const QString &channel, const QString &data)
+{
+    emit meshMessage(channel, data);
 }

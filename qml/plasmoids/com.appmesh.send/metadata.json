@@ -1,0 +1,16 @@
+{
+    "KPlugin": {
+        "Id": "com.appmesh.send",
+        "Name": "Mesh Send",
+        "Description": "Send messages and notifications through the AppMesh network",
+        "Icon": "mail-send",
+        "Category": "Utilities",
+        "Authors": [
+            { "Name": "Mark Constable", "Email": "markc@renta.net" }
+        ]
+    },
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API": "declarativeappletscript",
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-MainScript": "ui/main.qml"
+}

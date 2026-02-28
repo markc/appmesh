@@ -2,6 +2,9 @@
 /target/
 Cargo.lock
 
+# QML/CMake build artifacts
+/qml/build/
+
 # Environment (contains secrets)
 server/.env
 

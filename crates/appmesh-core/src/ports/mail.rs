@@ -3,13 +3,13 @@ use std::sync::Mutex;
 
 use jmap_client::client::Client;
 use jmap_client::core::query;
-use jmap_client::core::response::EmailGetResponse;
+use jmap_client::core::response::{EmailGetResponse, IdentityGetResponse};
 use jmap_client::email;
 use jmap_client::mailbox;
 
 use crate::port::*;
 
-/// JMAP mail port — read email via any JMAP server (Stalwart, Fastmail, etc.).
+/// JMAP mail port — full email via any JMAP server (Stalwart, Fastmail, etc.).
 pub struct MailPort {
     rt: tokio::runtime::Runtime,
     client: Mutex<Option<Client>>,
@@ -84,6 +84,15 @@ impl MailPort {
         Ok(guard)
     }
 
+    fn port_err(msg: impl std::fmt::Display) -> PortError {
+        PortError {
+            code: -1,
+            message: msg.to_string(),
+        }
+    }
+
+    // --- Phase 1: Read-only commands ---
+
     fn cmd_connect(&self, args: &HashMap<String, String>) -> PortResult {
         let url = args
             .get("url")
@@ -113,17 +122,16 @@ impl MailPort {
         let client = self
             .rt
             .block_on(Self::connect_inner(&url, &user, &pass))
-            .map_err(|e| PortError {
-                code: -1,
-                message: format!("connect failed: {}", e),
-            })?;
+            .map_err(|e| Self::port_err(format!("connect failed: {}", e)))?;
 
         let account_id = client.default_account_id().to_string();
 
-        let mut guard = self.client.lock().map_err(|e| PortError {
-            code: -1,
-            message: format!("lock poisoned: {}", e),
-        })?;
+        // Persist credentials so subsequent stateless port opens auto-connect
+        std::env::set_var("JMAP_URL", &url);
+        std::env::set_var("JMAP_USER", &user);
+        std::env::set_var("JMAP_PASS", &pass);
+
+        let mut guard = self.client.lock().map_err(|e| Self::port_err(e))?;
         *guard = Some(client);
 
         Ok(PortValue::String(format!(
@@ -133,10 +141,7 @@ impl MailPort {
     }
 
     fn cmd_status(&self) -> PortResult {
-        let guard = self.client.lock().map_err(|e| PortError {
-            code: -1,
-            message: format!("lock poisoned: {}", e),
-        })?;
+        let guard = self.client.lock().map_err(|e| Self::port_err(e))?;
 
         match guard.as_ref() {
             Some(client) => {
@@ -161,10 +166,7 @@ impl MailPort {
                 None::<mailbox::query::Filter>,
                 None::<Vec<query::Comparator<mailbox::query::Comparator>>>,
             ))
-            .map_err(|e| PortError {
-                code: -1,
-                message: format!("mailbox_query failed: {}", e),
-            })?;
+            .map_err(|e| Self::port_err(format!("mailbox_query failed: {}", e)))?;
 
         let mut mailboxes = Vec::new();
         for id in response.ids() {
@@ -211,10 +213,7 @@ impl MailPort {
         let response = self
             .rt
             .block_on(client.email_query(Some(filter), Some(sort)))
-            .map_err(|e| PortError {
-                code: -1,
-                message: format!("email_query failed: {}", e),
-            })?;
+            .map_err(|e| Self::port_err(format!("email_query failed: {}", e)))?;
 
         let ids = response.ids();
         let count = ids.len().min(limit);
@@ -241,10 +240,7 @@ impl MailPort {
     }
 
     fn cmd_read(&self, args: &HashMap<String, String>) -> PortResult {
-        let id = args.get("id").ok_or_else(|| PortError {
-            code: -1,
-            message: "missing 'id' argument".into(),
-        })?;
+        let id = args.get("id").ok_or_else(|| Self::port_err("missing 'id' argument"))?;
 
         let guard = self.require_client()?;
         let client = guard.as_ref().unwrap();
@@ -272,14 +268,8 @@ impl MailPort {
                     .await
                     .map(|mut r| r.take_list().pop())
             })
-            .map_err(|e| PortError {
-                code: -1,
-                message: format!("email_get failed: {}", e),
-            })?
-            .ok_or_else(|| PortError {
-                code: -1,
-                message: format!("email not found: {}", id),
-            })?;
+            .map_err(|e| Self::port_err(format!("email_get failed: {}", e)))?
+            .ok_or_else(|| Self::port_err(format!("email not found: {}", id)))?;
 
         let mut map = HashMap::new();
         map.insert("id".into(), PortValue::String(msg.id().unwrap_or("").into()));
@@ -317,25 +307,433 @@ impl MailPort {
     }
 
     fn cmd_mark_read(&self, args: &HashMap<String, String>) -> PortResult {
-        let id = args.get("id").ok_or_else(|| PortError {
-            code: -1,
-            message: "missing 'id' argument".into(),
-        })?;
+        let id = args.get("id").ok_or_else(|| Self::port_err("missing 'id' argument"))?;
 
         let guard = self.require_client()?;
         let client = guard.as_ref().unwrap();
 
         self.rt
             .block_on(client.email_set_keyword(id, "$seen", true))
-            .map_err(|e| PortError {
-                code: -1,
-                message: format!("email_set_keyword failed: {}", e),
-            })?;
+            .map_err(|e| Self::port_err(format!("email_set_keyword failed: {}", e)))?;
 
         Ok(PortValue::String(format!("marked {} as read", id)))
     }
 
+    // --- Phase 2: Send & Compose ---
+
+    fn cmd_identities(&self) -> PortResult {
+        let guard = self.require_client()?;
+        let client = guard.as_ref().unwrap();
+
+        let identities = self
+            .rt
+            .block_on(async {
+                let mut request = client.build();
+                request.get_identity();
+                request
+                    .send_single::<IdentityGetResponse>()
+                    .await
+                    .map(|mut r| r.take_list())
+            })
+            .map_err(|e| Self::port_err(format!("get_identity failed: {}", e)))?;
+
+        let mut list = Vec::new();
+        for ident in &identities {
+            let mut map = HashMap::new();
+            map.insert("id".into(), PortValue::String(ident.id().unwrap_or("").into()));
+            map.insert("name".into(), PortValue::String(ident.name().unwrap_or("").into()));
+            map.insert("email".into(), PortValue::String(ident.email().unwrap_or("").into()));
+            let reply_to = ident
+                .reply_to()
+                .and_then(|addrs| addrs.first())
+                .map(|a| a.email().to_string())
+                .unwrap_or_default();
+            map.insert("reply_to".into(), PortValue::String(reply_to));
+            list.push(PortValue::Map(map));
+        }
+
+        Ok(PortValue::List(list))
+    }
+
+    fn cmd_send(&self, args: &HashMap<String, String>) -> PortResult {
+        let to = args.get("to").ok_or_else(|| Self::port_err("missing 'to' argument"))?;
+        let subject = args
+            .get("subject")
+            .ok_or_else(|| Self::port_err("missing 'subject' argument"))?;
+        let body = args
+            .get("body")
+            .ok_or_else(|| Self::port_err("missing 'body' argument"))?;
+
+        let guard = self.require_client()?;
+        let client = guard.as_ref().unwrap();
+
+        // Get first identity
+        let (identity_id, from_email) = self.find_first_identity(client)?;
+
+        let from = args.get("from").map(|s| s.as_str()).unwrap_or(&from_email);
+
+        // Find Sent mailbox
+        let sent_id = self.find_mailbox_id(client, "Sent")?;
+
+        // Build RFC 5322 message
+        let raw = build_rfc5322(from, to, subject, body, None, None);
+
+        // Import into Sent with no draft keyword
+        let email = self
+            .rt
+            .block_on(client.email_import(raw, [&sent_id], None::<Vec<String>>, None))
+            .map_err(|e| Self::port_err(format!("email_import failed: {}", e)))?;
+
+        let email_id = email.id().unwrap_or("unknown").to_string();
+
+        // Submit for delivery
+        let submission = self
+            .rt
+            .block_on(client.email_submission_create(&email_id, &identity_id))
+            .map_err(|e| Self::port_err(format!("email_submission_create failed: {}", e)))?;
+
+        let sub_id = submission.id().unwrap_or("unknown");
+        Ok(PortValue::String(format!(
+            "sent to {} (submission: {})",
+            to, sub_id
+        )))
+    }
+
+    fn cmd_reply(&self, args: &HashMap<String, String>) -> PortResult {
+        let id = args.get("id").ok_or_else(|| Self::port_err("missing 'id' argument"))?;
+        let body = args
+            .get("body")
+            .ok_or_else(|| Self::port_err("missing 'body' argument"))?;
+
+        let guard = self.require_client()?;
+        let client = guard.as_ref().unwrap();
+
+        // Fetch original email headers
+        let original = self
+            .rt
+            .block_on(async {
+                let mut request = client.build();
+                let get_request = request.get_email().ids([id.as_str()]);
+                get_request.properties([
+                    email::Property::Id,
+                    email::Property::Subject,
+                    email::Property::From,
+                    email::Property::To,
+                    email::Property::MessageId,
+                    email::Property::InReplyTo,
+                    email::Property::References,
+                ]);
+                request
+                    .send_single::<EmailGetResponse>()
+                    .await
+                    .map(|mut r| r.take_list().pop())
+            })
+            .map_err(|e| Self::port_err(format!("email_get failed: {}", e)))?
+            .ok_or_else(|| Self::port_err(format!("email not found: {}", id)))?;
+
+        // Get identity for From header
+        let (identity_id, from_email) = self.find_first_identity(client)?;
+
+        // Build reply headers
+        let orig_from = original
+            .from()
+            .and_then(|f| f.first())
+            .map(|a| a.email().to_string())
+            .unwrap_or_default();
+        let orig_subject = original.subject().unwrap_or("").to_string();
+        let reply_subject = if orig_subject.to_lowercase().starts_with("re:") {
+            orig_subject
+        } else {
+            format!("Re: {}", orig_subject)
+        };
+
+        // In-Reply-To: original Message-ID
+        let in_reply_to = original
+            .message_id()
+            .and_then(|ids| ids.first())
+            .map(|id| format!("<{}>", id));
+
+        // References: original References + original Message-ID
+        let references = {
+            let mut refs: Vec<String> = original
+                .references()
+                .unwrap_or(&[])
+                .iter()
+                .map(|r| format!("<{}>", r))
+                .collect();
+            if let Some(msg_id) = original.message_id().and_then(|ids| ids.first()) {
+                refs.push(format!("<{}>", msg_id));
+            }
+            if refs.is_empty() {
+                None
+            } else {
+                Some(refs.join(" "))
+            }
+        };
+
+        // Find Sent mailbox
+        let sent_id = self.find_mailbox_id(client, "Sent")?;
+
+        // Build reply RFC 5322
+        let raw = build_rfc5322(
+            &from_email,
+            &orig_from,
+            &reply_subject,
+            body,
+            in_reply_to.as_deref(),
+            references.as_deref(),
+        );
+
+        // Import into Sent
+        let email = self
+            .rt
+            .block_on(client.email_import(raw, [&sent_id], None::<Vec<String>>, None))
+            .map_err(|e| Self::port_err(format!("email_import failed: {}", e)))?;
+
+        let email_id = email.id().unwrap_or("unknown").to_string();
+
+        // Submit for delivery
+        let submission = self
+            .rt
+            .block_on(client.email_submission_create(&email_id, &identity_id))
+            .map_err(|e| Self::port_err(format!("email_submission_create failed: {}", e)))?;
+
+        let sub_id = submission.id().unwrap_or("unknown");
+        Ok(PortValue::String(format!(
+            "replied to {} (submission: {})",
+            id, sub_id
+        )))
+    }
+
+    // --- Phase 3: Mail Management ---
+
+    fn cmd_move(&self, args: &HashMap<String, String>) -> PortResult {
+        let id = args.get("id").ok_or_else(|| Self::port_err("missing 'id' argument"))?;
+        let mailbox = args
+            .get("mailbox")
+            .ok_or_else(|| Self::port_err("missing 'mailbox' argument"))?;
+
+        let guard = self.require_client()?;
+        let client = guard.as_ref().unwrap();
+
+        let mailbox_id = self.find_mailbox_id(client, mailbox)?;
+
+        self.rt
+            .block_on(client.email_set_mailboxes(id, [&mailbox_id]))
+            .map_err(|e| Self::port_err(format!("email_set_mailboxes failed: {}", e)))?;
+
+        Ok(PortValue::String(format!("moved {} to {}", id, mailbox)))
+    }
+
+    fn cmd_delete(&self, args: &HashMap<String, String>) -> PortResult {
+        let id = args.get("id").ok_or_else(|| Self::port_err("missing 'id' argument"))?;
+        let permanent = args
+            .get("permanent")
+            .map(|s| s == "true" || s == "1")
+            .unwrap_or(false);
+
+        let guard = self.require_client()?;
+        let client = guard.as_ref().unwrap();
+
+        if permanent {
+            self.rt
+                .block_on(client.email_destroy(id))
+                .map_err(|e| Self::port_err(format!("email_destroy failed: {}", e)))?;
+            Ok(PortValue::String(format!("deleted {}", id)))
+        } else {
+            let trash_id = self.find_mailbox_id(client, "Trash")?;
+            self.rt
+                .block_on(client.email_set_mailboxes(id, [&trash_id]))
+                .map_err(|e| Self::port_err(format!("email_set_mailboxes failed: {}", e)))?;
+            Ok(PortValue::String(format!("moved {} to Trash", id)))
+        }
+    }
+
+    fn cmd_flag(&self, args: &HashMap<String, String>) -> PortResult {
+        let id = args.get("id").ok_or_else(|| Self::port_err("missing 'id' argument"))?;
+
+        let guard = self.require_client()?;
+        let client = guard.as_ref().unwrap();
+
+        self.rt
+            .block_on(client.email_set_keyword(id, "$flagged", true))
+            .map_err(|e| Self::port_err(format!("email_set_keyword failed: {}", e)))?;
+
+        Ok(PortValue::String(format!("flagged {}", id)))
+    }
+
+    fn cmd_unflag(&self, args: &HashMap<String, String>) -> PortResult {
+        let id = args.get("id").ok_or_else(|| Self::port_err("missing 'id' argument"))?;
+
+        let guard = self.require_client()?;
+        let client = guard.as_ref().unwrap();
+
+        self.rt
+            .block_on(client.email_set_keyword(id, "$flagged", false))
+            .map_err(|e| Self::port_err(format!("email_set_keyword failed: {}", e)))?;
+
+        Ok(PortValue::String(format!("unflagged {}", id)))
+    }
+
+    fn cmd_mark_unread(&self, args: &HashMap<String, String>) -> PortResult {
+        let id = args.get("id").ok_or_else(|| Self::port_err("missing 'id' argument"))?;
+
+        let guard = self.require_client()?;
+        let client = guard.as_ref().unwrap();
+
+        self.rt
+            .block_on(client.email_set_keyword(id, "$seen", false))
+            .map_err(|e| Self::port_err(format!("email_set_keyword failed: {}", e)))?;
+
+        Ok(PortValue::String(format!("marked {} as unread", id)))
+    }
+
+    fn cmd_search(&self, args: &HashMap<String, String>) -> PortResult {
+        let text = args
+            .get("text")
+            .ok_or_else(|| Self::port_err("missing 'text' argument"))?;
+        let limit: usize = args
+            .get("limit")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(20);
+
+        let guard = self.require_client()?;
+        let client = guard.as_ref().unwrap();
+
+        let filter = email::query::Filter::text(text);
+        let sort = vec![email::query::Comparator::received_at()];
+
+        let response = self
+            .rt
+            .block_on(client.email_query(Some(filter), Some(sort)))
+            .map_err(|e| Self::port_err(format!("email_query failed: {}", e)))?;
+
+        let ids = response.ids();
+        let count = ids.len().min(limit);
+        let mut emails = Vec::new();
+
+        let properties = [
+            email::Property::Id,
+            email::Property::Subject,
+            email::Property::From,
+            email::Property::ReceivedAt,
+            email::Property::Preview,
+        ];
+
+        for id in &ids[..count] {
+            if let Ok(Some(msg)) = self
+                .rt
+                .block_on(client.email_get(id, Some(properties.clone())))
+            {
+                emails.push(self.email_to_summary(&msg));
+            }
+        }
+
+        Ok(PortValue::List(emails))
+    }
+
+    fn cmd_attachment_list(&self, args: &HashMap<String, String>) -> PortResult {
+        let id = args.get("id").ok_or_else(|| Self::port_err("missing 'id' argument"))?;
+
+        let guard = self.require_client()?;
+        let client = guard.as_ref().unwrap();
+
+        let msg = self
+            .rt
+            .block_on(client.email_get(
+                id,
+                Some([email::Property::Id, email::Property::Attachments]),
+            ))
+            .map_err(|e| Self::port_err(format!("email_get failed: {}", e)))?
+            .ok_or_else(|| Self::port_err(format!("email not found: {}", id)))?;
+
+        let mut list = Vec::new();
+        if let Some(attachments) = msg.attachments() {
+            for att in attachments {
+                let mut map = HashMap::new();
+                map.insert(
+                    "name".into(),
+                    PortValue::String(att.name().unwrap_or("unnamed").into()),
+                );
+                map.insert(
+                    "type".into(),
+                    PortValue::String(att.content_type().unwrap_or("application/octet-stream").into()),
+                );
+                map.insert("size".into(), PortValue::Int(att.size() as i64));
+                map.insert(
+                    "blob_id".into(),
+                    PortValue::String(att.blob_id().unwrap_or("").into()),
+                );
+                list.push(PortValue::Map(map));
+            }
+        }
+
+        Ok(PortValue::List(list))
+    }
+
+    fn cmd_attachment_download(&self, args: &HashMap<String, String>) -> PortResult {
+        let blob_id = args
+            .get("id")
+            .ok_or_else(|| Self::port_err("missing 'id' argument (blob_id)"))?;
+        let name = args
+            .get("name")
+            .map(|s| s.as_str())
+            .unwrap_or("attachment");
+
+        let guard = self.require_client()?;
+        let client = guard.as_ref().unwrap();
+
+        let bytes = self
+            .rt
+            .block_on(client.download(blob_id))
+            .map_err(|e| Self::port_err(format!("download failed: {}", e)))?;
+
+        // Write to temp directory
+        let dir = std::path::Path::new("/tmp/appmesh-mail");
+        std::fs::create_dir_all(dir)
+            .map_err(|e| Self::port_err(format!("mkdir failed: {}", e)))?;
+
+        // Sanitize filename
+        let safe_name: String = name
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
+            .collect();
+        let path = dir.join(&safe_name);
+
+        std::fs::write(&path, &bytes)
+            .map_err(|e| Self::port_err(format!("write failed: {}", e)))?;
+
+        Ok(PortValue::String(format!(
+            "saved to {} ({} bytes)",
+            path.display(),
+            bytes.len()
+        )))
+    }
+
     // --- Helpers ---
+
+    fn find_first_identity(&self, client: &Client) -> Result<(String, String), PortError> {
+        let identities = self
+            .rt
+            .block_on(async {
+                let mut request = client.build();
+                request.get_identity();
+                request
+                    .send_single::<IdentityGetResponse>()
+                    .await
+                    .map(|mut r| r.take_list())
+            })
+            .map_err(|e| Self::port_err(format!("get_identity failed: {}", e)))?;
+
+        let ident = identities
+            .first()
+            .ok_or_else(|| Self::port_err("no identities configured on server"))?;
+
+        Ok((
+            ident.id().unwrap_or("").to_string(),
+            ident.email().unwrap_or("").to_string(),
+        ))
+    }
 
     fn find_mailbox_id(&self, client: &Client, name: &str) -> Result<String, PortError> {
         let response = self
@@ -344,10 +742,7 @@ impl MailPort {
                 None::<mailbox::query::Filter>,
                 None::<Vec<query::Comparator<mailbox::query::Comparator>>>,
             ))
-            .map_err(|e| PortError {
-                code: -1,
-                message: format!("mailbox_query failed: {}", e),
-            })?;
+            .map_err(|e| Self::port_err(format!("mailbox_query failed: {}", e)))?;
 
         let name_lower = name.to_lowercase();
 
@@ -368,10 +763,7 @@ impl MailPort {
             }
         }
 
-        Err(PortError {
-            code: -1,
-            message: format!("mailbox not found: {}", name),
-        })
+        Err(Self::port_err(format!("mailbox not found: {}", name)))
     }
 
     fn email_to_summary(&self, msg: &email::Email<jmap_client::Get>) -> PortValue {
@@ -433,6 +825,87 @@ impl MailPort {
     }
 }
 
+/// Build a minimal RFC 5322 message.
+fn build_rfc5322(
+    from: &str,
+    to: &str,
+    subject: &str,
+    body: &str,
+    in_reply_to: Option<&str>,
+    references: Option<&str>,
+) -> Vec<u8> {
+    use std::fmt::Write;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    // Generate a simple Message-ID
+    let msg_id = format!("<{}.{}@appmesh>", now, std::process::id());
+
+    let mut msg = String::new();
+    let _ = writeln!(msg, "From: {}", from);
+    let _ = writeln!(msg, "To: {}", to);
+    let _ = writeln!(msg, "Subject: {}", subject);
+    let _ = writeln!(msg, "Date: {}", rfc2822_date(now));
+    let _ = writeln!(msg, "Message-ID: {}", msg_id);
+    let _ = writeln!(msg, "MIME-Version: 1.0");
+    let _ = writeln!(msg, "Content-Type: text/plain; charset=utf-8");
+    if let Some(irt) = in_reply_to {
+        let _ = writeln!(msg, "In-Reply-To: {}", irt);
+    }
+    if let Some(refs) = references {
+        let _ = writeln!(msg, "References: {}", refs);
+    }
+    let _ = writeln!(msg);
+    msg.push_str(body);
+
+    msg.into_bytes()
+}
+
+/// Format unix timestamp as RFC 2822 date string.
+fn rfc2822_date(epoch_secs: u64) -> String {
+    // Simple UTC-only formatting (sufficient for JMAP submission)
+    let secs_per_day = 86400u64;
+    let days = epoch_secs / secs_per_day;
+    let day_secs = epoch_secs % secs_per_day;
+    let hours = day_secs / 3600;
+    let minutes = (day_secs % 3600) / 60;
+    let seconds = day_secs % 60;
+
+    // Days since Unix epoch (Thu 1 Jan 1970)
+    // Compute year/month/day from days since epoch
+    let (year, month, day) = days_to_ymd(days);
+
+    let day_names = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
+    let month_names = [
+        "", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let dow = (days % 7) as usize; // 0 = Thu (epoch was Thursday)
+
+    format!(
+        "{}, {:02} {} {} {:02}:{:02}:{:02} +0000",
+        day_names[dow], day, month_names[month as usize], year, hours, minutes, seconds
+    )
+}
+
+/// Convert days since Unix epoch to (year, month, day).
+fn days_to_ymd(days: u64) -> (u64, u64, u64) {
+    // Algorithm from Howard Hinnant's chrono-compatible date library
+    let z = days + 719468;
+    let era = z / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
 // Safety: MailPort is only used from one thread at a time via Mutex or single-threaded FFI
 unsafe impl Send for MailPort {}
 
@@ -443,6 +916,7 @@ impl AppMeshPort for MailPort {
 
     fn commands(&self) -> Vec<CommandDef> {
         vec![
+            // Phase 1: Read-only
             CommandDef {
                 name: "connect".into(),
                 description: "Connect to JMAP mail server".into(),
@@ -508,17 +982,180 @@ impl AppMeshPort for MailPort {
                     required: true,
                 }],
             },
+            // Phase 2: Send & Compose
+            CommandDef {
+                name: "identities".into(),
+                description: "List sender identities".into(),
+                params: vec![],
+            },
+            CommandDef {
+                name: "send".into(),
+                description: "Send an email".into(),
+                params: vec![
+                    ParamDef {
+                        name: "to".into(),
+                        description: "Recipient email address".into(),
+                        required: true,
+                    },
+                    ParamDef {
+                        name: "subject".into(),
+                        description: "Email subject".into(),
+                        required: true,
+                    },
+                    ParamDef {
+                        name: "body".into(),
+                        description: "Email body text".into(),
+                        required: true,
+                    },
+                    ParamDef {
+                        name: "from".into(),
+                        description: "From address (default: first identity)".into(),
+                        required: false,
+                    },
+                ],
+            },
+            CommandDef {
+                name: "reply".into(),
+                description: "Reply to an email".into(),
+                params: vec![
+                    ParamDef {
+                        name: "id".into(),
+                        description: "Email ID to reply to".into(),
+                        required: true,
+                    },
+                    ParamDef {
+                        name: "body".into(),
+                        description: "Reply body text".into(),
+                        required: true,
+                    },
+                ],
+            },
+            // Phase 3: Mail Management
+            CommandDef {
+                name: "move".into(),
+                description: "Move email to another mailbox".into(),
+                params: vec![
+                    ParamDef {
+                        name: "id".into(),
+                        description: "Email ID".into(),
+                        required: true,
+                    },
+                    ParamDef {
+                        name: "mailbox".into(),
+                        description: "Target mailbox name or ID".into(),
+                        required: true,
+                    },
+                ],
+            },
+            CommandDef {
+                name: "delete".into(),
+                description: "Delete email (move to Trash, or permanent)".into(),
+                params: vec![
+                    ParamDef {
+                        name: "id".into(),
+                        description: "Email ID".into(),
+                        required: true,
+                    },
+                    ParamDef {
+                        name: "permanent".into(),
+                        description: "Permanently delete (default: false)".into(),
+                        required: false,
+                    },
+                ],
+            },
+            CommandDef {
+                name: "flag".into(),
+                description: "Flag an email".into(),
+                params: vec![ParamDef {
+                    name: "id".into(),
+                    description: "Email ID".into(),
+                    required: true,
+                }],
+            },
+            CommandDef {
+                name: "unflag".into(),
+                description: "Unflag an email".into(),
+                params: vec![ParamDef {
+                    name: "id".into(),
+                    description: "Email ID".into(),
+                    required: true,
+                }],
+            },
+            CommandDef {
+                name: "mark_unread".into(),
+                description: "Mark an email as unread".into(),
+                params: vec![ParamDef {
+                    name: "id".into(),
+                    description: "Email ID".into(),
+                    required: true,
+                }],
+            },
+            CommandDef {
+                name: "search".into(),
+                description: "Full-text search across all mailboxes".into(),
+                params: vec![
+                    ParamDef {
+                        name: "text".into(),
+                        description: "Search text".into(),
+                        required: true,
+                    },
+                    ParamDef {
+                        name: "limit".into(),
+                        description: "Max results (default: 20)".into(),
+                        required: false,
+                    },
+                ],
+            },
+            CommandDef {
+                name: "attachment_list".into(),
+                description: "List attachments on an email".into(),
+                params: vec![ParamDef {
+                    name: "id".into(),
+                    description: "Email ID".into(),
+                    required: true,
+                }],
+            },
+            CommandDef {
+                name: "attachment_download".into(),
+                description: "Download attachment by blob ID".into(),
+                params: vec![
+                    ParamDef {
+                        name: "id".into(),
+                        description: "Blob ID".into(),
+                        required: true,
+                    },
+                    ParamDef {
+                        name: "name".into(),
+                        description: "Filename to save as".into(),
+                        required: false,
+                    },
+                ],
+            },
         ]
     }
 
     fn execute(&self, cmd: &str, args: &HashMap<String, String>) -> PortResult {
         match cmd {
+            // Phase 1
             "connect" => self.cmd_connect(args),
             "status" => self.cmd_status(),
             "mailboxes" => self.cmd_mailboxes(),
             "query" => self.cmd_query(args),
             "read" => self.cmd_read(args),
             "mark_read" => self.cmd_mark_read(args),
+            // Phase 2
+            "identities" => self.cmd_identities(),
+            "send" => self.cmd_send(args),
+            "reply" => self.cmd_reply(args),
+            // Phase 3
+            "move" => self.cmd_move(args),
+            "delete" => self.cmd_delete(args),
+            "flag" => self.cmd_flag(args),
+            "unflag" => self.cmd_unflag(args),
+            "mark_unread" => self.cmd_mark_unread(args),
+            "search" => self.cmd_search(args),
+            "attachment_list" => self.cmd_attachment_list(args),
+            "attachment_download" => self.cmd_attachment_download(args),
             other => Err(PortError {
                 code: -1,
                 message: format!("unknown command: {}", other),

@@ -52,6 +52,47 @@ $ports = [
         'mark_read' => ['Mark email as read', [
             'id' => prop('string', 'Email ID'),
         ], ['id']],
+        // Phase 2: Send & Compose
+        'identities' => ['List sender identities', [], []],
+        'send' => ['Send an email', [
+            'to' => prop('string', 'Recipient email address'),
+            'subject' => prop('string', 'Email subject'),
+            'body' => prop('string', 'Email body text'),
+            'from' => prop('string', 'From address (default: first identity)'),
+        ], ['to', 'subject', 'body']],
+        'reply' => ['Reply to an email', [
+            'id' => prop('string', 'Email ID to reply to'),
+            'body' => prop('string', 'Reply body text'),
+        ], ['id', 'body']],
+        // Phase 3: Mail Management
+        'move' => ['Move email to another mailbox', [
+            'id' => prop('string', 'Email ID'),
+            'mailbox' => prop('string', 'Target mailbox name or ID'),
+        ], ['id', 'mailbox']],
+        'delete' => ['Delete email (move to Trash, or permanent)', [
+            'id' => prop('string', 'Email ID'),
+            'permanent' => prop('string', 'Permanently delete (true/false, default: false)'),
+        ], ['id']],
+        'flag' => ['Flag an email', [
+            'id' => prop('string', 'Email ID'),
+        ], ['id']],
+        'unflag' => ['Unflag an email', [
+            'id' => prop('string', 'Email ID'),
+        ], ['id']],
+        'mark_unread' => ['Mark email as unread', [
+            'id' => prop('string', 'Email ID'),
+        ], ['id']],
+        'search' => ['Full-text search across all mailboxes', [
+            'text' => prop('string', 'Search text'),
+            'limit' => prop('string', 'Max results (default: 20)'),
+        ], ['text']],
+        'attachment_list' => ['List attachments on an email', [
+            'id' => prop('string', 'Email ID'),
+        ], ['id']],
+        'attachment_download' => ['Download attachment by blob ID', [
+            'id' => prop('string', 'Blob ID'),
+            'name' => prop('string', 'Filename to save as'),
+        ], ['id']],
     ],
     'windows' => [
         'list' => ['List all open windows', [], []],

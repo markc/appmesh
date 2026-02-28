@@ -50,8 +50,21 @@ impl MailPort {
         user: &str,
         pass: &str,
     ) -> Result<Client, Box<dyn std::error::Error>> {
+        // Extract hostname for follow_redirects (Stalwart 307s /.well-known/jmap → /jmap/session)
+        let host = url
+            .strip_prefix("https://")
+            .or_else(|| url.strip_prefix("http://"))
+            .unwrap_or(url)
+            .split('/')
+            .next()
+            .unwrap_or("")
+            .split(':')
+            .next()
+            .unwrap_or("")
+            .to_string();
         let client = Client::new()
             .credentials((user, pass))
+            .follow_redirects([host])
             .connect(url)
             .await?;
         Ok(client)

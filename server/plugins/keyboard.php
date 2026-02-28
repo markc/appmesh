@@ -2,13 +2,17 @@
 /**
  * AppMesh Keyboard Plugin
  *
- * Injects keyboard input into the focused window via ei-type (libei/KWin EIS).
- * Tools: type text, send key combos.
+ * Injects keyboard input into the focused window via KWin EIS.
+ * Uses FFI (libappmesh_core.so) for fast injection (~0.05ms),
+ * falls back to ei-type subprocess if FFI is unavailable (~50-100ms).
  */
+
+// Load FFI bridge
+require_once __DIR__ . '/../appmesh-ffi.php';
 
 return [
     'appmesh_keyboard_type' => new Tool(
-        description: 'Type text into the focused window using ei-type (libei keyboard injection)',
+        description: 'Type text into the focused window using KWin EIS keyboard injection',
         inputSchema: schema(
             ['text' => prop('string', 'The text to type into the focused window')],
             ['text']
@@ -19,6 +23,18 @@ return [
             }
 
             $text = $args['text'];
+            $len = strlen($text);
+
+            // Try FFI first
+            $ffi = AppMeshFFI::instance();
+            if ($ffi !== null) {
+                if ($ffi->typeText($text)) {
+                    return "Typed {$len} characters into focused window (FFI)";
+                }
+                AppMeshLogger::warning('FFI type_text failed, falling back to subprocess');
+            }
+
+            // Subprocess fallback
             $result = appmesh_exec('printf %s ' . escapeshellarg($text) . ' | ei-type');
 
             if (!$result['success']) {
@@ -29,7 +45,7 @@ return [
                 return "Error: ei-type failed (exit {$result['exitCode']}): {$result['output']}";
             }
 
-            return "Typed " . strlen($text) . " characters into focused window";
+            return "Typed {$len} characters into focused window (subprocess)";
         }
     ),
 
@@ -45,6 +61,17 @@ return [
             }
 
             $key = $args['key'];
+
+            // Try FFI first
+            $ffi = AppMeshFFI::instance();
+            if ($ffi !== null) {
+                if ($ffi->sendKey($key)) {
+                    return "Sent key combo: {$key} (FFI)";
+                }
+                AppMeshLogger::warning('FFI send_key failed, falling back to subprocess');
+            }
+
+            // Subprocess fallback
             $result = appmesh_exec('ei-type --key ' . escapeshellarg($key));
 
             if (!$result['success']) {
@@ -55,7 +82,7 @@ return [
                 return "Error: ei-type --key failed (exit {$result['exitCode']}): {$result['output']}";
             }
 
-            return "Sent key combo: {$key}";
+            return "Sent key combo: {$key} (subprocess)";
         }
     ),
 ];

@@ -1,0 +1,13 @@
+[package]
+name = "appmesh-cli"
+version = "0.1.0"
+edition = "2021"
+description = "AppMesh CLI — desktop input injection via KWin EIS"
+
+[[bin]]
+name = "appmesh"
+path = "src/main.rs"
+
+[dependencies]
+appmesh-core = { path = "../appmesh-core" }
+clap = { version = "4", features = ["derive"] }

@@ -183,58 +183,191 @@ inbox.stalwart.mko.amp          → inbox on Stalwart mail on mko
 
 ## 4. The AMP Message
 
-The `AmpMessage` envelope wraps every inter-port communication:
+AMP messages use **markdown frontmatter** as the wire format — `---` delimited headers with an optional freeform body. The encoding is **8-bit UTF-8**. Every AMP message is a valid `.amp.md` file, readable by humans, `cat`-able, `grep`-able, and renderable by any markdown tool.
+
+### 4.1 The Three Shapes
+
+One format, one parser, three message shapes:
+
+| Shape | Description | Use case |
+|---|---|---|
+| **Full message** | Headers + markdown/text body | Events, rich responses, notifications |
+| **Command** | Headers only (including `args:`), no body | Requests, acks, simple responses |
+| **Data** | Minimal `json:` header, no body needed | High-throughput streams, structured payloads |
+
+All three are delimited by `---` and parsed identically. The presence of `json:`, `args:`, or a body determines the shape — not a mode flag.
+
+### 4.2 Format
+
+Headers are flat `key: value` lines between `---` delimiters. Two special keys carry inline JSON: `args` (command arguments) and `json` (self-contained data payload). Everything after the closing `---` is the body — freeform content (markdown, JSON, plain text, or empty).
+
+**Shape 1 — Full message** (headers + body):
+
+```
+---
+amp: 1
+type: event
+id: 0192b3a4-7c8d-0123-4567-890abcdef012
+from: screenshot.appmesh.cachyos.amp
+command: taken
+---
+# Screenshot saved
+Path: `/tmp/screenshot-2026-02-28.png`
+Size: **2.4 MB**
+```
+
+**Shape 2 — Command** (headers only):
+
+```
+---
+amp: 1
+type: request
+id: 0192b3a4-5e6f-7890-abcd-ef1234567890
+from: script.appmesh.cachyos.amp
+to: notify.appmesh.cachyos.amp
+command: send
+args: {"title": "Hello", "body": "World"}
+ttl: 30
+---
+```
+
+**Shape 3 — Data** (minimal envelope, structured payload):
+
+```
+---
+json: {"count": 12, "unread": 3}
+---
+```
+
+The `json:` shape can carry additional headers when routing context is needed:
+
+```
+---
+amp: 1
+reply-to: 0192b3a4-5e6f-7890-abcd-ef1234567890
+json: {"count": 12, "unread": 3}
+---
+```
+
+### 4.3 Header Fields
+
+| Field | Required | Description |
+|---|---|---|
+| `amp` | yes* | Protocol version (always `1`) |
+| `type` | yes* | `request`, `response`, `event`, `stream` |
+| `id` | yes* | UUID v7 (time-ordered) |
+| `from` | yes* | Source AMP port address |
+| `to` | no | Target AMP port address (omitted for events/broadcasts) |
+| `command` | yes* | The action to perform |
+| `args` | no | Command arguments as inline JSON: `{"key": "value"}` |
+| `json` | no | Self-contained data payload as inline JSON |
+| `reply-to` | no | Message ID this responds to (responses only) |
+| `ttl` | no | Time-to-live in seconds (default 30) |
+| `error` | no | Error string (error responses only) |
+| `timestamp` | no | Unix timestamp with microseconds |
+
+\* Required for full messages and commands. Data-only messages (`json:` shape) may omit routing headers when the transport already provides context (e.g., an established WebSocket channel or Unix socket session).
+
+### 4.4 More Examples
+
+**Request with no args:**
+
+```
+---
+amp: 1
+type: request
+id: 0192b3a4-5e6f-7890-abcd-ef1234567890
+from: clipboard.appmesh.cachyos.amp
+to: inbox.stalwart.mko.amp
+command: get
+ttl: 30
+---
+```
+
+**Response with structured body:**
+
+```
+---
+amp: 1
+type: response
+id: 0192b3a4-6a7b-8901-cdef-234567890abc
+reply-to: 0192b3a4-5e6f-7890-abcd-ef1234567890
+from: inbox.stalwart.mko.amp
+to: clipboard.appmesh.cachyos.amp
+command: search
+---
+{"count": 12, "unread": 3, "messages": [{"id": 1, "subject": "Hello"}]}
+```
+
+**Stream of data messages** (on an established channel):
+
+```
+---
+json: {"level": 0.72, "peak": 0.91, "channel": "left"}
+---
+---
+json: {"level": 0.68, "peak": 0.85, "channel": "right"}
+---
+```
+
+### 4.5 Parsing
+
+Headers are flat `key: value` strings — no YAML parser needed. Two keys (`args` and `json`) carry inline JSON, decoded with `json_decode` / `serde_json`. The parser is identical for all three shapes.
+
+**PHP:**
 
 ```php
-class AmpMessage
-{
-    public string  $id;       // UUID v7 (time-ordered)
-    public string  $from;     // Source AMP Port address
-    public string  $to;       // Target AMP Port address
-    public string  $command;  // The action to perform
-    public array   $args;     // Command arguments (key-value)
-    public string  $type;     // 'request', 'response', 'event', 'stream'
-    public ?string $replyTo;  // Message ID this responds to
-    public ?string $error;    // Error string if failed
-    public mixed   $payload;  // Return data (for responses)
-    public int     $timestamp;// Unix timestamp with microseconds
-    public int     $ttl;      // Time-to-live in seconds (default 30)
+function amp_parse(string $raw): array {
+    [, $fm, $body] = preg_split('/^---$/m', $raw, 3);
+    $headers = [];
+    foreach (explode("\n", trim($fm)) as $line) {
+        [$k, $v] = explode(': ', $line, 2);
+        $headers[trim($k)] = trim($v);
+    }
+    if (isset($headers['json'])) {
+        $headers['json'] = json_decode($headers['json'], true);
+    }
+    if (isset($headers['args'])) {
+        $headers['args'] = json_decode($headers['args'], true);
+    }
+    return ['headers' => $headers, 'body' => trim($body ?? '')];
 }
 ```
 
-**JSON wire format:**
+**Rust:**
 
-```json
-{
-  "v": 1,
-  "id": "0192b3a4-5e6f-7890-abcd-ef1234567890",
-  "from": "clipboard.appmesh.cachyos.amp",
-  "to": "inbox.stalwart.mko.amp",
-  "command": "get",
-  "args": {},
-  "type": "request",
-  "reply_to": null,
-  "timestamp": 1709164800.123456,
-  "ttl": 30
+```rust
+fn amp_parse(raw: &str) -> (HashMap<&str, &str>, &str) {
+    let content = raw.trim_start_matches("---\n");
+    let (fm, body) = content.split_once("\n---\n").unwrap_or((content, ""));
+    let mut headers = HashMap::new();
+    for line in fm.lines() {
+        if let Some((k, v)) = line.split_once(": ") {
+            headers.insert(k.trim(), v.trim());
+        }
+    }
+    // json and args values are JSON strings — decode downstream
+    (headers, body.trim_start_matches('\n'))
 }
 ```
 
-Response:
+### 4.6 Design Rationale
 
-```json
-{
-  "v": 1,
-  "id": "0192b3a4-6a7b-8901-cdef-234567890abc",
-  "from": "inbox.stalwart.mko.amp",
-  "to": "clipboard.appmesh.cachyos.amp",
-  "command": "get",
-  "type": "response",
-  "reply_to": "0192b3a4-5e6f-7890-abcd-ef1234567890",
-  "payload": { "count": 12, "unread": 3 },
-  "timestamp": 1709164800.234567,
-  "ttl": 30
-}
-```
+The `---` frontmatter format is borrowed from the markdown ecosystem (Hugo, Jekyll, Statamic) where it is universally understood. AMP frontmatter *looks like* YAML but is intentionally restricted to flat `key: value` lines — no indentation, no nesting, no type coercion surprises. The `args` and `json` fields use inline JSON because both PHP and Rust already have JSON parsers (`json_decode`, `serde_json`) with zero additional dependencies.
+
+The three shapes serve different needs with zero format negotiation:
+
+- **Full messages** carry rich, human-readable content — event logs are browsable markdown files
+- **Commands** are self-contained in headers — compact, no body parsing needed
+- **Data messages** are near-pure JSON with `---` framing — ideal for high-throughput streams where routing context is already established by the transport
+
+This makes AMP messages:
+
+- **Human-readable** — `cat message.amp.md` and read it
+- **Tool-friendly** — `grep "command: send" *.amp.md` works
+- **Debuggable** — message logs are browsable text files
+- **Markdown-native** — event bodies render in any markdown viewer, plasmoid, or browser
+- **Stream-friendly** — `---` delimiters naturally frame messages on a byte stream
 
 **Status:** Not yet implemented as a wire format. The MCP server uses JSON-RPC. The QML plugin uses signal strings. `AmpMessage` is the target envelope for mesh-level communication.
 
@@ -435,7 +568,7 @@ Any application on any node, scriptable from PHP. Plasmoids as thin QML shells w
 | reis fork | `markc/reis` (`fix-empty-scm-rights`) | Upstream PR #18 pending |
 | QML bridge | C++ dlopen wrapper | No cxx-qt build complexity for v1, runtime library search |
 | PHP integration | FFI (not subprocess) | 20x faster than shelling out, same process |
-| Message format | JSON everywhere | Rust serde, PHP native, QML QVariantMap, browser-native |
+| Message format | Markdown frontmatter + JSON args | Human-readable, `cat`/`grep`-able, `.amp.md` files, zero YAML dep |
 | Async runtime | tokio (single-threaded, per-port) | Avoids nested-runtime deadlock with zbus |
 | Remote transport | WebSocket over WireGuard | Laravel Reverb already deployed on all nodes |
 | DNS | PowerDNS | Already manages zones on all nodes, API for dynamic records |

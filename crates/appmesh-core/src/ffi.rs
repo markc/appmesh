@@ -6,18 +6,20 @@ use crate::input::InputHandle;
 use crate::port::AppMeshPort;
 use crate::ports::clipboard::ClipboardPort;
 use crate::ports::input::InputPort;
+use crate::ports::mail::MailPort;
 use crate::ports::notify::NotifyPort;
 use crate::ports::screenshot::ScreenshotPort;
 use crate::ports::windows::WindowsPort;
 
 /// All available port names.
-pub const PORT_NAMES: &[&str] = &["clipboard", "input", "notify", "screenshot", "windows"];
+pub const PORT_NAMES: &[&str] = &["clipboard", "input", "mail", "notify", "screenshot", "windows"];
 
 /// Open a port by name. Returns the port or an error message.
 pub fn open_port(name: &str) -> Result<Box<dyn AppMeshPort>, String> {
     match name {
         "clipboard" => ClipboardPort::new().map(|p| Box::new(p) as Box<dyn AppMeshPort>),
         "input" => InputPort::new().map(|p| Box::new(p) as Box<dyn AppMeshPort>),
+        "mail" => MailPort::new().map(|p| Box::new(p) as Box<dyn AppMeshPort>),
         "notify" => NotifyPort::new().map(|p| Box::new(p) as Box<dyn AppMeshPort>),
         "screenshot" => ScreenshotPort::new().map(|p| Box::new(p) as Box<dyn AppMeshPort>),
         "windows" => WindowsPort::new().map(|p| Box::new(p) as Box<dyn AppMeshPort>),

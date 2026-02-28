@@ -34,6 +34,25 @@ $ports = [
             [],
         ],
     ],
+    'mail' => [
+        'connect' => ['Connect to JMAP mail server', [
+            'url' => prop('string', 'JMAP server URL'),
+            'user' => prop('string', 'Email/username'),
+            'pass' => prop('string', 'Password'),
+        ], []],
+        'status' => ['Check mail connection status', [], []],
+        'mailboxes' => ['List all mailboxes', [], []],
+        'query' => ['Query emails in a mailbox', [
+            'mailbox' => prop('string', 'Mailbox name or ID (default: Inbox)'),
+            'limit' => prop('string', 'Max results (default: 20)'),
+        ], []],
+        'read' => ['Read an email by ID', [
+            'id' => prop('string', 'Email ID'),
+        ], ['id']],
+        'mark_read' => ['Mark email as read', [
+            'id' => prop('string', 'Email ID'),
+        ], ['id']],
+    ],
     'windows' => [
         'list' => ['List all open windows', [], []],
         'activate' => ['Activate a window by ID', ['id' => prop('string', 'Window ID (UUID)')], ['id']],

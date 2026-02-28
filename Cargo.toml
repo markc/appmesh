@@ -7,3 +7,4 @@ reis = { git = "https://github.com/markc/reis", branch = "fix-empty-scm-rights" 
 zbus = { version = "5", default-features = false, features = ["tokio"] }
 tokio = { version = "1", features = ["rt", "net", "macros"] }
 libc = "0.2"
+jmap-client = "0.3"

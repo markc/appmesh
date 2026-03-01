@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Qml Quick Widgets)
-find_package(KF6Kirigami REQUIRED)
+find_package(KF6Kirigami)
 qt_standard_project_setup(REQUIRES 6.5)
 
 # --- Shared QML plugin library ---
@@ -50,7 +50,7 @@ install(DIRECTORY ${CMAKE_SOURCE_DIR}/plasmoids/com.appmesh.send
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/plasmoids/com.appmesh.log
     DESTINATION ${PLASMOID_INSTALL_DIR})
 
-# --- Kirigami mail client ---
+# --- Pure Qt Quick mail client (Thunderbird-style) ---
 qt_add_executable(appmesh-mail mail/main.cpp)
 qt_add_qml_module(appmesh-mail
     URI AppMeshMail
@@ -60,5 +60,20 @@ qt_add_qml_module(appmesh-mail
 )
 
 target_link_libraries(appmesh-mail PRIVATE
-    Qt6::Core Qt6::Qml Qt6::Quick Qt6::Widgets KF6::Kirigami
+    Qt6::Core Qt6::Qml Qt6::Quick Qt6::Widgets
 )
+
+# --- Kirigami mail client (preserved) ---
+if(KF6Kirigami_FOUND)
+    qt_add_executable(appmesh-mail-kirigami mail-kirigami/main.cpp)
+    qt_add_qml_module(appmesh-mail-kirigami
+        URI AppMeshMailKirigami
+        VERSION 1.0
+        QML_FILES mail-kirigami/Main.qml
+        NO_RESOURCE_TARGET_PATH
+    )
+
+    target_link_libraries(appmesh-mail-kirigami PRIVATE
+        Qt6::Core Qt6::Qml Qt6::Quick Qt6::Widgets KF6::Kirigami
+    )
+endif()

@@ -2,13 +2,14 @@ import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
 import Qt.labs.settings
-import org.kde.kirigami as Kirigami
 import AppMesh
 
-Kirigami.ApplicationWindow {
+QQC2.ApplicationWindow {
     id: root
     visible: true
     title: currentMailboxName + " — AppMesh Mail"
+    width: 1024
+    height: 700
 
     property var mailboxes: []
     property var messages: []
@@ -17,6 +18,8 @@ Kirigami.ApplicationWindow {
     property string currentMailboxName: "Inbox"
     property bool connected: false
     property bool replyAboveQuote: true
+    property string statusMessage: ""
+    property string readingPanePosition: "right"  // "right", "bottom", "hidden"
 
     // --- Persist window geometry, split positions, credentials ---
 
@@ -34,6 +37,7 @@ Kirigami.ApplicationWindow {
         category: "SplitView"
         property real folderWidth: 200
         property real messageWidth: 350
+        property real messageHeight: 250
     }
 
     Settings {
@@ -43,6 +47,25 @@ Kirigami.ApplicationWindow {
         property string user: ""
         property string pass: ""
         property bool remember: false
+    }
+
+    Settings {
+        id: viewSettings
+        category: "View"
+        property alias readingPanePosition: root.readingPanePosition
+    }
+
+    // --- Status notification (replaces showPassiveNotification) ---
+
+    function showNotification(msg) {
+        statusMessage = msg
+        notificationTimer.restart()
+    }
+
+    Timer {
+        id: notificationTimer
+        interval: 3000
+        onTriggered: statusMessage = ""
     }
 
     // --- Helpers ---
@@ -98,11 +121,11 @@ Kirigami.ApplicationWindow {
         })
         if (result.ok) {
             connected = true
-            showPassiveNotification(result.ok)
+            showNotification(result.ok)
             loadMailboxes()
             return true
         } else if (result.error) {
-            showPassiveNotification("Connect failed: " + result.error.message)
+            showNotification("Connect failed: " + result.error.message)
             return false
         }
         return false
@@ -131,7 +154,7 @@ Kirigami.ApplicationWindow {
                 selectMailbox(mailboxes[0].id, mailboxes[0].name)
             }
         } else if (result.error) {
-            showPassiveNotification("Error: " + result.error.message)
+            showNotification("Error: " + result.error.message)
         }
     }
 
@@ -148,7 +171,6 @@ Kirigami.ApplicationWindow {
         })
         if (result.ok) {
             messages = result.ok
-            // Auto-select first message so detail pane is populated at startup
             if (messages.length > 0 && !currentEmail.id) {
                 readMessage(messages[0].id)
             }
@@ -169,10 +191,10 @@ Kirigami.ApplicationWindow {
             to: to, subject: subject, body: body
         })
         if (result.ok) {
-            showPassiveNotification(result.ok)
-            composeSheet.close()
+            showNotification(result.ok)
+            composeDialog.close()
         } else if (result.error) {
-            showPassiveNotification("Error: " + result.error.message)
+            showNotification("Error: " + result.error.message)
         }
     }
 
@@ -181,17 +203,17 @@ Kirigami.ApplicationWindow {
             id: id, body: body
         })
         if (result.ok) {
-            showPassiveNotification(result.ok)
-            replySheet.close()
+            showNotification(result.ok)
+            replyDialog.close()
         } else if (result.error) {
-            showPassiveNotification("Error: " + result.error.message)
+            showNotification("Error: " + result.error.message)
         }
     }
 
     function deleteMessage(id) {
         let result = AppMeshBridge.portExecute("mail", "delete", { id: id })
         if (result.ok) {
-            showPassiveNotification(result.ok)
+            showNotification(result.ok)
             currentEmail = {}
             loadMessages()
         }
@@ -200,7 +222,7 @@ Kirigami.ApplicationWindow {
     function flagMessage(id, flagged) {
         let cmd = flagged ? "unflag" : "flag"
         let result = AppMeshBridge.portExecute("mail", cmd, { id: id })
-        if (result.ok) showPassiveNotification(result.ok)
+        if (result.ok) showNotification(result.ok)
     }
 
     function moveMessage(id, mailbox) {
@@ -208,7 +230,7 @@ Kirigami.ApplicationWindow {
             id: id, mailbox: mailbox
         })
         if (result.ok) {
-            showPassiveNotification(result.ok)
+            showNotification(result.ok)
             currentEmail = {}
             loadMessages()
         }
@@ -223,7 +245,6 @@ Kirigami.ApplicationWindow {
     }
 
     Component.onCompleted: {
-        // Restore window size (defaults for first run)
         if (root.width < 100) root.width = 1024
         if (root.height < 100) root.height = 700
 
@@ -231,7 +252,6 @@ Kirigami.ApplicationWindow {
             if (checkStatus()) {
                 loadMailboxes()
             } else if (credSettings.remember && credSettings.user && credSettings.pass) {
-                // Auto-login with saved credentials
                 if (connectAndLoad(credSettings.url, credSettings.user, credSettings.pass)) {
                     return
                 }
@@ -244,27 +264,154 @@ Kirigami.ApplicationWindow {
         }
     }
 
-    // --- Toolbar ---
+    // --- Menu Bar ---
+
+    menuBar: QQC2.MenuBar {
+        QQC2.Menu {
+            title: "&File"
+            QQC2.Action {
+                text: "&Compose"
+                icon.name: "mail-message-new"
+                shortcut: "Ctrl+N"
+                enabled: root.connected
+                onTriggered: composeDialog.open()
+            }
+            QQC2.MenuSeparator {}
+            QQC2.Action {
+                text: "&Quit"
+                icon.name: "application-exit"
+                shortcut: "Ctrl+Q"
+                onTriggered: Qt.quit()
+            }
+        }
+        QQC2.Menu {
+            title: "&Edit"
+            QQC2.Action {
+                text: "&Search"
+                icon.name: "edit-find"
+                shortcut: "Ctrl+F"
+                enabled: root.connected
+                onTriggered: searchField.forceActiveFocus()
+            }
+        }
+        QQC2.Menu {
+            title: "&View"
+            QQC2.Action {
+                text: "Reading Pane &Right"
+                icon.name: "view-right-new"
+                checkable: true
+                checked: root.readingPanePosition === "right"
+                onTriggered: root.readingPanePosition = "right"
+            }
+            QQC2.Action {
+                text: "Reading Pane &Bottom"
+                icon.name: "view-bottom-new"
+                checkable: true
+                checked: root.readingPanePosition === "bottom"
+                onTriggered: root.readingPanePosition = "bottom"
+            }
+            QQC2.Action {
+                text: "Reading Pane &Hidden"
+                icon.name: "view-hidden"
+                checkable: true
+                checked: root.readingPanePosition === "hidden"
+                onTriggered: root.readingPanePosition = "hidden"
+            }
+            QQC2.MenuSeparator {}
+            QQC2.Action {
+                text: "Re&fresh"
+                icon.name: "view-refresh"
+                shortcut: "F5"
+                enabled: root.connected
+                onTriggered: { loadMailboxes(); loadMessages() }
+            }
+        }
+        QQC2.Menu {
+            title: "&Account"
+            QQC2.Action {
+                text: root.connected ? "&Disconnect" : "&Connect"
+                icon.name: root.connected ? "network-disconnect" : "network-connect"
+                onTriggered: {
+                    if (root.connected) {
+                        root.connected = false
+                        root.mailboxes = []
+                        root.messages = []
+                        root.currentMailbox = ""
+                        root.currentMailboxName = "Inbox"
+                        root.currentEmail = {}
+                    }
+                    loginDialog.open()
+                }
+            }
+        }
+    }
+
+    // --- Main Toolbar ---
 
     header: QQC2.ToolBar {
         RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: Kirigami.Units.smallSpacing
-            anchors.rightMargin: Kirigami.Units.smallSpacing
+            anchors.leftMargin: 4
+            anchors.rightMargin: 4
 
             QQC2.ToolButton {
                 icon.name: "mail-message-new"
                 text: "Compose"
                 display: QQC2.AbstractButton.TextBesideIcon
                 enabled: root.connected
-                onClicked: composeSheet.open()
+                onClicked: composeDialog.open()
+            }
+            QQC2.ToolSeparator {}
+            QQC2.ToolButton {
+                icon.name: "mail-reply-sender"
+                text: "Reply"
+                display: QQC2.AbstractButton.TextBesideIcon
+                enabled: !!root.currentEmail.id
+                onClicked: {
+                    replyDialog.replyToId = root.currentEmail.id || ""
+                    replyDialog.replySubject = root.currentEmail.subject || ""
+                    replyDialog.quotedText = root.quoteText(root.currentEmail)
+                    replyDialog.prepareBody()
+                    replyDialog.open()
+                }
             }
             QQC2.ToolButton {
-                icon.name: "view-refresh"
-                text: "Refresh"
+                icon.name: "mail-forward"
+                text: "Forward"
                 display: QQC2.AbstractButton.TextBesideIcon
-                enabled: root.connected
-                onClicked: { loadMailboxes(); loadMessages() }
+                enabled: !!root.currentEmail.id
+                onClicked: {
+                    composeTo.text = ""
+                    composeSubject.text = "Fwd: " + (root.currentEmail.subject || "")
+                    composeBody.text = "\n\n--- Forwarded message ---\n" +
+                        "From: " + (root.currentEmail.from || "") + "\n" +
+                        "Date: " + root.formatDate(root.currentEmail.date) + "\n" +
+                        "Subject: " + (root.currentEmail.subject || "") + "\n\n" +
+                        (root.currentEmail.body || root.currentEmail.preview || "")
+                    composeDialog.open()
+                }
+            }
+            QQC2.ToolSeparator {}
+            QQC2.ToolButton {
+                icon.name: "flag"
+                text: "Flag"
+                display: QQC2.AbstractButton.TextBesideIcon
+                enabled: !!root.currentEmail.id
+                onClicked: root.flagMessage(root.currentEmail.id, false)
+            }
+            QQC2.ToolButton {
+                icon.name: "edit-delete"
+                text: "Delete"
+                display: QQC2.AbstractButton.TextBesideIcon
+                enabled: !!root.currentEmail.id
+                onClicked: root.deleteMessage(root.currentEmail.id)
+            }
+            QQC2.ToolButton {
+                icon.name: "edit-move"
+                text: "Move"
+                display: QQC2.AbstractButton.TextBesideIcon
+                enabled: !!root.currentEmail.id
+                onClicked: moveDialog.open()
             }
 
             Item { Layout.fillWidth: true }
@@ -278,32 +425,13 @@ Kirigami.ApplicationWindow {
                     if (text.length > 0) searchMessages(text)
                 }
             }
-
-            QQC2.ToolButton {
-                icon.name: root.connected ? "system-log-out" : "network-connect"
-                text: root.connected ? "Log out" : "Log in"
-                display: QQC2.AbstractButton.TextBesideIcon
-                onClicked: {
-                    if (root.connected) {
-                        root.connected = false
-                        root.mailboxes = []
-                        root.messages = []
-                        root.currentMailbox = ""
-                        root.currentMailboxName = "Inbox"
-                        root.currentEmail = {}
-                        loginDialog.open()
-                    } else {
-                        loginDialog.open()
-                    }
-                }
-            }
         }
     }
 
     // --- Three-pane SplitView ---
 
     QQC2.SplitView {
-        id: splitView
+        id: outerSplit
         anchors.fill: parent
         orientation: Qt.Horizontal
 
@@ -313,19 +441,24 @@ Kirigami.ApplicationWindow {
             QQC2.SplitView.preferredWidth: splitSettings.folderWidth
             QQC2.SplitView.minimumWidth: 120
             QQC2.SplitView.maximumWidth: 400
-            color: Kirigami.Theme.backgroundColor
+            color: palette.window
 
             ColumnLayout {
                 anchors.fill: parent
                 spacing: 0
 
-                QQC2.Label {
-                    text: "Mailboxes"
-                    font.bold: true
-                    padding: Kirigami.Units.smallSpacing
+                Rectangle {
                     Layout.fillWidth: true
-                    background: Rectangle {
-                        color: Kirigami.Theme.alternateBackgroundColor
+                    implicitHeight: folderHeader.implicitHeight + 8
+                    color: palette.alternateBase
+
+                    QQC2.Label {
+                        id: folderHeader
+                        text: "Mailboxes"
+                        font.bold: true
+                        anchors.fill: parent
+                        anchors.margins: 4
+                        verticalAlignment: Text.AlignVCenter
                     }
                 }
 
@@ -344,12 +477,13 @@ Kirigami.ApplicationWindow {
                         highlighted: modelData.id === root.currentMailbox
 
                         contentItem: RowLayout {
-                            spacing: Kirigami.Units.smallSpacing
+                            spacing: 4
 
-                            Kirigami.Icon {
-                                source: root.mailboxIcon(modelData.role)
-                                Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                                Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                            Image {
+                                source: "image://icon/" + root.mailboxIcon(modelData.role)
+                                sourceSize: Qt.size(16, 16)
+                                Layout.preferredWidth: 16
+                                Layout.preferredHeight: 16
                             }
                             QQC2.Label {
                                 text: modelData.name || "Unknown"
@@ -367,70 +501,127 @@ Kirigami.ApplicationWindow {
                         onClicked: root.selectMailbox(modelData.id, modelData.name)
                     }
 
-                    Kirigami.PlaceholderMessage {
+                    // Empty state
+                    ColumnLayout {
                         anchors.centerIn: parent
                         visible: folderList.count === 0
-                        text: root.connected ? "No mailboxes" : "Not connected"
-                        icon.name: root.connected ? "folder-mail" : "network-disconnect"
+                        spacing: 8
+
+                        Image {
+                            source: "image://icon/" + (root.connected ? "folder-mail" : "network-disconnect")
+                            sourceSize: Qt.size(48, 48)
+                            Layout.alignment: Qt.AlignHCenter
+                        }
+                        QQC2.Label {
+                            text: root.connected ? "No mailboxes" : "Not connected"
+                            opacity: 0.6
+                            Layout.alignment: Qt.AlignHCenter
+                        }
                     }
                 }
             }
 
-            // Save width when handle is dragged
             onWidthChanged: splitSettings.folderWidth = width
         }
 
-        // --- Middle pane: Message list ---
-        Rectangle {
-            id: messagePane
-            QQC2.SplitView.preferredWidth: splitSettings.messageWidth
-            QQC2.SplitView.minimumWidth: 200
-            QQC2.SplitView.maximumWidth: 800
-            color: Kirigami.Theme.backgroundColor
+        // --- Right area: message list + reading pane ---
+        QQC2.SplitView {
+            id: innerSplit
+            QQC2.SplitView.fillWidth: true
+            orientation: root.readingPanePosition === "bottom" ? Qt.Vertical : Qt.Horizontal
 
-            ColumnLayout {
-                anchors.fill: parent
-                spacing: 0
+            // --- Message list pane ---
+            Rectangle {
+                id: messagePane
+                QQC2.SplitView.preferredWidth: root.readingPanePosition === "right" ? splitSettings.messageWidth : undefined
+                QQC2.SplitView.preferredHeight: root.readingPanePosition === "bottom" ? splitSettings.messageHeight : undefined
+                QQC2.SplitView.minimumWidth: root.readingPanePosition === "right" ? 200 : undefined
+                QQC2.SplitView.minimumHeight: root.readingPanePosition === "bottom" ? 120 : undefined
+                QQC2.SplitView.fillWidth: root.readingPanePosition === "hidden"
+                QQC2.SplitView.fillHeight: root.readingPanePosition === "hidden"
+                color: palette.window
 
-                QQC2.Label {
-                    text: root.currentMailboxName
-                    font.bold: true
-                    padding: Kirigami.Units.smallSpacing
-                    Layout.fillWidth: true
-                    background: Rectangle {
-                        color: Kirigami.Theme.alternateBackgroundColor
+                ColumnLayout {
+                    anchors.fill: parent
+                    spacing: 0
+
+                    // Column headers
+                    Rectangle {
+                        Layout.fillWidth: true
+                        implicitHeight: columnHeaders.implicitHeight + 8
+                        color: palette.alternateBase
+
+                        Row {
+                            id: columnHeaders
+                            anchors.fill: parent
+                            anchors.margins: 4
+                            spacing: 4
+
+                            QQC2.Label {
+                                width: 180
+                                text: "From"
+                                font.bold: true
+                                elide: Text.ElideRight
+                            }
+                            QQC2.Label {
+                                width: parent.width - 180 - 90 - 8
+                                text: "Subject"
+                                font.bold: true
+                                elide: Text.ElideRight
+                            }
+                            QQC2.Label {
+                                width: 86
+                                text: "Date"
+                                font.bold: true
+                                horizontalAlignment: Text.AlignRight
+                            }
+                        }
                     }
-                }
 
-                ListView {
-                    id: messageList
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    model: root.messages
-                    clip: true
-                    currentIndex: -1
+                    // Separator
+                    Rectangle {
+                        Layout.fillWidth: true
+                        implicitHeight: 1
+                        color: palette.mid
+                    }
 
-                    delegate: QQC2.ItemDelegate {
-                        required property var modelData
-                        required property int index
-                        width: ListView.view.width
-                        highlighted: (root.currentEmail.id || "") === modelData.id
+                    ListView {
+                        id: messageList
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        model: root.messages
+                        clip: true
+                        currentIndex: -1
 
-                        contentItem: ColumnLayout {
-                            spacing: 2
+                        delegate: QQC2.ItemDelegate {
+                            required property var modelData
+                            required property int index
+                            width: ListView.view.width
+                            highlighted: (root.currentEmail.id || "") === modelData.id
 
-                            RowLayout {
-                                Layout.fillWidth: true
+                            contentItem: Row {
+                                spacing: 4
+
                                 QQC2.Label {
+                                    width: 180
                                     text: modelData.from || "Unknown"
-                                    font.bold: true
+                                    font.bold: !(modelData.isRead)
                                     elide: Text.ElideRight
-                                    Layout.fillWidth: true
+                                    anchors.verticalCenter: parent.verticalCenter
                                 }
                                 QQC2.Label {
+                                    width: parent.width - 180 - 90 - 8
+                                    text: modelData.subject || "(no subject)"
+                                    elide: Text.ElideRight
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                QQC2.Label {
+                                    width: 86
                                     text: root.formatDateShort(modelData.date)
-                                    font.pointSize: Kirigami.Theme.smallFont.pointSize
                                     opacity: 0.7
+                                    horizontalAlignment: Text.AlignRight
+                                    anchors.verticalCenter: parent.verticalCenter
+
                                     QQC2.ToolTip.text: root.formatDate(modelData.date)
                                     QQC2.ToolTip.visible: dateHover.containsMouse
                                     MouseArea {
@@ -441,174 +632,255 @@ Kirigami.ApplicationWindow {
                                     }
                                 }
                             }
-                            QQC2.Label {
-                                text: modelData.subject || "(no subject)"
-                                elide: Text.ElideRight
-                                Layout.fillWidth: true
-                            }
-                            QQC2.Label {
-                                text: modelData.preview || ""
-                                elide: Text.ElideRight
-                                Layout.fillWidth: true
-                                opacity: 0.6
-                                font.pointSize: Kirigami.Theme.smallFont.pointSize
-                            }
+
+                            onClicked: root.readMessage(modelData.id)
                         }
 
-                        onClicked: root.readMessage(modelData.id)
+                        // Empty state
+                        ColumnLayout {
+                            anchors.centerIn: parent
+                            visible: messageList.count === 0
+                            spacing: 8
+
+                            Image {
+                                source: "image://icon/" + (root.connected ? "mail-unread" : "network-disconnect")
+                                sourceSize: Qt.size(48, 48)
+                                Layout.alignment: Qt.AlignHCenter
+                            }
+                            QQC2.Label {
+                                text: {
+                                    if (!AppMeshBridge.available) return "Mail library not loaded"
+                                    if (!root.connected) return "Not connected"
+                                    return "No messages"
+                                }
+                                opacity: 0.6
+                                Layout.alignment: Qt.AlignHCenter
+                            }
+                        }
+                    }
+                }
+
+                onWidthChanged: if (root.readingPanePosition === "right") splitSettings.messageWidth = width
+                onHeightChanged: if (root.readingPanePosition === "bottom") splitSettings.messageHeight = height
+            }
+
+            // --- Reading pane ---
+            Rectangle {
+                id: detailPane
+                visible: root.readingPanePosition !== "hidden"
+                QQC2.SplitView.fillWidth: true
+                QQC2.SplitView.fillHeight: true
+                QQC2.SplitView.minimumWidth: root.readingPanePosition === "right" ? 250 : undefined
+                QQC2.SplitView.minimumHeight: root.readingPanePosition === "bottom" ? 120 : undefined
+                color: palette.window
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    spacing: 0
+
+                    // Detail toolbar
+                    QQC2.ToolBar {
+                        Layout.fillWidth: true
+                        visible: !!root.currentEmail.id
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 4
+                            anchors.rightMargin: 4
+
+                            QQC2.ToolButton {
+                                icon.name: "mail-reply-sender"
+                                text: "Reply"
+                                display: QQC2.AbstractButton.TextBesideIcon
+                                onClicked: {
+                                    replyDialog.replyToId = root.currentEmail.id || ""
+                                    replyDialog.replySubject = root.currentEmail.subject || ""
+                                    replyDialog.quotedText = root.quoteText(root.currentEmail)
+                                    replyDialog.prepareBody()
+                                    replyDialog.open()
+                                }
+                            }
+                            QQC2.ToolButton {
+                                icon.name: "flag"
+                                display: QQC2.AbstractButton.IconOnly
+                                QQC2.ToolTip.text: "Flag"
+                                QQC2.ToolTip.visible: hovered
+                                onClicked: root.flagMessage(root.currentEmail.id, false)
+                            }
+                            QQC2.ToolButton {
+                                icon.name: "mail-mark-unread"
+                                display: QQC2.AbstractButton.IconOnly
+                                QQC2.ToolTip.text: "Mark Unread"
+                                QQC2.ToolTip.visible: hovered
+                                onClicked: {
+                                    let result = AppMeshBridge.portExecute("mail", "mark_unread", { id: root.currentEmail.id })
+                                    if (result.ok) root.showNotification(result.ok)
+                                }
+                            }
+                            QQC2.ToolButton {
+                                icon.name: "edit-move"
+                                display: QQC2.AbstractButton.IconOnly
+                                QQC2.ToolTip.text: "Move to..."
+                                QQC2.ToolTip.visible: hovered
+                                onClicked: moveDialog.open()
+                            }
+                            QQC2.ToolButton {
+                                icon.name: "edit-delete"
+                                display: QQC2.AbstractButton.IconOnly
+                                QQC2.ToolTip.text: "Delete"
+                                QQC2.ToolTip.visible: hovered
+                                onClicked: root.deleteMessage(root.currentEmail.id)
+                            }
+                        }
                     }
 
-                    Kirigami.PlaceholderMessage {
-                        anchors.centerIn: parent
-                        visible: messageList.count === 0
-                        text: {
-                            if (!AppMeshBridge.available) return "Mail library not loaded"
-                            if (!root.connected) return "Not connected"
-                            return "No messages"
+                    // Detail content
+                    QQC2.ScrollView {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        visible: !!root.currentEmail.id
+
+                        Flickable {
+                            contentWidth: availableWidth
+                            contentHeight: detailColumn.implicitHeight
+
+                            ColumnLayout {
+                                id: detailColumn
+                                width: parent.width
+                                spacing: 8
+
+                                Item { Layout.preferredHeight: 4 }
+
+                                GridLayout {
+                                    columns: 2
+                                    columnSpacing: 4
+                                    rowSpacing: 4
+                                    Layout.fillWidth: true
+                                    Layout.leftMargin: 8
+                                    Layout.rightMargin: 8
+
+                                    QQC2.Label { text: "From:"; font.bold: true; opacity: 0.7 }
+                                    QQC2.Label { text: root.currentEmail.from || ""; wrapMode: Text.Wrap; Layout.fillWidth: true }
+
+                                    QQC2.Label { text: "To:"; font.bold: true; opacity: 0.7 }
+                                    QQC2.Label { text: root.currentEmail.to || ""; wrapMode: Text.Wrap; Layout.fillWidth: true }
+
+                                    QQC2.Label { text: "Date:"; font.bold: true; opacity: 0.7 }
+                                    QQC2.Label { text: root.formatDate(root.currentEmail.date); Layout.fillWidth: true }
+
+                                    QQC2.Label { text: "Subject:"; font.bold: true; opacity: 0.7 }
+                                    QQC2.Label { text: root.currentEmail.subject || ""; font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                                }
+
+                                // Separator
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.leftMargin: 8
+                                    Layout.rightMargin: 8
+                                    implicitHeight: 1
+                                    color: palette.mid
+                                }
+
+                                QQC2.Label {
+                                    text: root.currentEmail.body || root.currentEmail.preview || ""
+                                    wrapMode: Text.Wrap
+                                    Layout.fillWidth: true
+                                    Layout.leftMargin: 8
+                                    Layout.rightMargin: 8
+                                    textFormat: Text.PlainText
+                                }
+
+                                Item { Layout.preferredHeight: 8 }
+                            }
                         }
-                        icon.name: root.connected ? "mail-unread" : "network-disconnect"
+                    }
+
+                    // Empty state
+                    ColumnLayout {
+                        anchors.centerIn: parent
+                        visible: !root.currentEmail.id
+                        spacing: 8
+
+                        Image {
+                            source: "image://icon/mail-read"
+                            sourceSize: Qt.size(48, 48)
+                            Layout.alignment: Qt.AlignHCenter
+                        }
+                        QQC2.Label {
+                            text: "Select a message to read"
+                            opacity: 0.6
+                            Layout.alignment: Qt.AlignHCenter
+                        }
                     }
                 }
             }
-
-            onWidthChanged: splitSettings.messageWidth = width
         }
+    }
 
-        // --- Right pane: Message detail ---
-        Rectangle {
-            id: detailPane
-            QQC2.SplitView.fillWidth: true
-            QQC2.SplitView.minimumWidth: 250
-            color: Kirigami.Theme.backgroundColor
+    // --- Status Bar ---
 
-            ColumnLayout {
-                anchors.fill: parent
-                spacing: 0
+    footer: QQC2.ToolBar {
+        implicitHeight: 28
 
-                // Detail toolbar
-                QQC2.ToolBar {
-                    Layout.fillWidth: true
-                    visible: !!root.currentEmail.id
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 8
+            anchors.rightMargin: 8
+            spacing: 8
 
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: Kirigami.Units.smallSpacing
-                        anchors.rightMargin: Kirigami.Units.smallSpacing
+            // Connection indicator
+            Rectangle {
+                width: 8
+                height: 8
+                radius: 4
+                color: root.connected ? "#2ecc71" : "#e74c3c"
+                Layout.alignment: Qt.AlignVCenter
+            }
+            QQC2.Label {
+                text: root.connected ? "Connected" : "Disconnected"
+                font.pointSize: Qt.application.font.pointSize - 1
+                opacity: 0.7
+            }
 
-                        QQC2.ToolButton {
-                            icon.name: "mail-reply-sender"
-                            text: "Reply"
-                            display: QQC2.AbstractButton.TextBesideIcon
-                            onClicked: {
-                                replySheet.replyToId = root.currentEmail.id || ""
-                                replySheet.replySubject = root.currentEmail.subject || ""
-                                replySheet.quotedText = root.quoteText(root.currentEmail)
-                                replySheet.prepareBody()
-                                replySheet.open()
-                            }
-                        }
-                        QQC2.ToolButton {
-                            icon.name: "flag"
-                            text: "Flag"
-                            display: QQC2.AbstractButton.IconOnly
-                            QQC2.ToolTip.text: "Flag"
-                            QQC2.ToolTip.visible: hovered
-                            onClicked: root.flagMessage(root.currentEmail.id, false)
-                        }
-                        QQC2.ToolButton {
-                            icon.name: "mail-mark-unread"
-                            text: "Unread"
-                            display: QQC2.AbstractButton.IconOnly
-                            QQC2.ToolTip.text: "Mark Unread"
-                            QQC2.ToolTip.visible: hovered
-                            onClicked: {
-                                let result = AppMeshBridge.portExecute("mail", "mark_unread", { id: root.currentEmail.id })
-                                if (result.ok) root.showPassiveNotification(result.ok)
-                            }
-                        }
-                        QQC2.ToolButton {
-                            icon.name: "edit-move"
-                            text: "Move"
-                            display: QQC2.AbstractButton.IconOnly
-                            QQC2.ToolTip.text: "Move to..."
-                            QQC2.ToolTip.visible: hovered
-                            onClicked: moveSheet.open()
-                        }
-                        QQC2.ToolButton {
-                            icon.name: "edit-delete"
-                            text: "Delete"
-                            display: QQC2.AbstractButton.IconOnly
-                            QQC2.ToolTip.text: "Delete"
-                            QQC2.ToolTip.visible: hovered
-                            onClicked: root.deleteMessage(root.currentEmail.id)
-                        }
-                    }
-                }
+            // Separator
+            Rectangle {
+                width: 1
+                Layout.fillHeight: true
+                Layout.topMargin: 4
+                Layout.bottomMargin: 4
+                color: palette.mid
+            }
 
-                // Detail content
-                QQC2.ScrollView {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    visible: !!root.currentEmail.id
+            QQC2.Label {
+                text: root.currentMailboxName
+                font.pointSize: Qt.application.font.pointSize - 1
+            }
 
-                    Flickable {
-                        contentWidth: availableWidth
-                        contentHeight: detailColumn.implicitHeight
+            Rectangle {
+                width: 1
+                Layout.fillHeight: true
+                Layout.topMargin: 4
+                Layout.bottomMargin: 4
+                color: palette.mid
+            }
 
-                        ColumnLayout {
-                            id: detailColumn
-                            width: parent.width
-                            spacing: Kirigami.Units.largeSpacing
+            QQC2.Label {
+                text: root.messages.length + " messages"
+                font.pointSize: Qt.application.font.pointSize - 1
+                opacity: 0.7
+            }
 
-                            Item { Layout.preferredHeight: Kirigami.Units.smallSpacing }
+            Item { Layout.fillWidth: true }
 
-                            GridLayout {
-                                columns: 2
-                                columnSpacing: Kirigami.Units.smallSpacing
-                                rowSpacing: 4
-                                Layout.fillWidth: true
-                                Layout.leftMargin: Kirigami.Units.largeSpacing
-                                Layout.rightMargin: Kirigami.Units.largeSpacing
+            // Status notification area
+            QQC2.Label {
+                text: root.statusMessage
+                font.pointSize: Qt.application.font.pointSize - 1
+                opacity: root.statusMessage.length > 0 ? 1.0 : 0.0
+                color: palette.highlight
 
-                                QQC2.Label { text: "From:"; font.bold: true; opacity: 0.7 }
-                                QQC2.Label { text: root.currentEmail.from || ""; wrapMode: Text.Wrap; Layout.fillWidth: true }
-
-                                QQC2.Label { text: "To:"; font.bold: true; opacity: 0.7 }
-                                QQC2.Label { text: root.currentEmail.to || ""; wrapMode: Text.Wrap; Layout.fillWidth: true }
-
-                                QQC2.Label { text: "Date:"; font.bold: true; opacity: 0.7 }
-                                QQC2.Label { text: root.formatDate(root.currentEmail.date); Layout.fillWidth: true }
-
-                                QQC2.Label { text: "Subject:"; font.bold: true; opacity: 0.7 }
-                                QQC2.Label { text: root.currentEmail.subject || ""; font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                            }
-
-                            Kirigami.Separator {
-                                Layout.fillWidth: true
-                                Layout.leftMargin: Kirigami.Units.largeSpacing
-                                Layout.rightMargin: Kirigami.Units.largeSpacing
-                            }
-
-                            QQC2.Label {
-                                text: root.currentEmail.body || root.currentEmail.preview || ""
-                                wrapMode: Text.Wrap
-                                Layout.fillWidth: true
-                                Layout.leftMargin: Kirigami.Units.largeSpacing
-                                Layout.rightMargin: Kirigami.Units.largeSpacing
-                                textFormat: Text.PlainText
-                            }
-
-                            Item { Layout.preferredHeight: Kirigami.Units.largeSpacing }
-                        }
-                    }
-                }
-
-                // Empty state
-                Kirigami.PlaceholderMessage {
-                    anchors.centerIn: parent
-                    visible: !root.currentEmail.id
-                    text: "Select a message to read"
-                    icon.name: "mail-read"
+                Behavior on opacity {
+                    NumberAnimation { duration: 200 }
                 }
             }
         }
@@ -616,46 +888,22 @@ Kirigami.ApplicationWindow {
 
     // --- Login Dialog ---
 
-    Kirigami.Dialog {
+    QQC2.Dialog {
         id: loginDialog
         title: "Connect to Mail Server"
-        preferredWidth: Kirigami.Units.gridUnit * 25
-        standardButtons: Kirigami.Dialog.NoButton
-        closePolicy: root.connected ? Kirigami.Dialog.CloseOnEscape : Kirigami.Dialog.NoAutoClose
-
-        customFooterActions: [
-            Kirigami.Action {
-                text: "Connect"
-                icon.name: "network-connect"
-                onTriggered: {
-                    loginError.visible = false
-                    let ok = root.connectAndLoad(loginUrl.text, loginUser.text, loginPass.text)
-                    if (ok) {
-                        if (rememberCheck.checked) {
-                            credSettings.url = loginUrl.text
-                            credSettings.user = loginUser.text
-                            credSettings.pass = loginPass.text
-                            credSettings.remember = true
-                        } else {
-                            credSettings.user = ""
-                            credSettings.pass = ""
-                            credSettings.remember = false
-                        }
-                        loginDialog.close()
-                    } else {
-                        loginError.visible = true
-                    }
-                }
-            }
-        ]
+        modal: true
+        anchors.centerIn: parent
+        width: 400
+        closePolicy: root.connected ? QQC2.Popup.CloseOnEscape : QQC2.Popup.NoAutoClose
+        standardButtons: QQC2.Dialog.NoButton
 
         ColumnLayout {
-            spacing: Kirigami.Units.smallSpacing
+            anchors.fill: parent
+            spacing: 8
 
-            Kirigami.Icon {
-                source: "mail-client"
-                Layout.preferredWidth: Kirigami.Units.iconSizes.huge
-                Layout.preferredHeight: Kirigami.Units.iconSizes.huge
+            Image {
+                source: "image://icon/mail-client"
+                sourceSize: Qt.size(48, 48)
                 Layout.alignment: Qt.AlignHCenter
             }
 
@@ -683,25 +931,7 @@ Kirigami.ApplicationWindow {
                 placeholderText: "Password"
                 echoMode: TextInput.Password
                 text: credSettings.remember ? credSettings.pass : ""
-                onAccepted: {
-                    loginError.visible = false
-                    let ok = root.connectAndLoad(loginUrl.text, loginUser.text, loginPass.text)
-                    if (ok) {
-                        if (rememberCheck.checked) {
-                            credSettings.url = loginUrl.text
-                            credSettings.user = loginUser.text
-                            credSettings.pass = loginPass.text
-                            credSettings.remember = true
-                        } else {
-                            credSettings.user = ""
-                            credSettings.pass = ""
-                            credSettings.remember = false
-                        }
-                        loginDialog.close()
-                    } else {
-                        loginError.visible = true
-                    }
-                }
+                onAccepted: loginConnectAction.trigger()
             }
 
             QQC2.CheckBox {
@@ -713,37 +943,70 @@ Kirigami.ApplicationWindow {
             QQC2.Label {
                 id: loginError
                 text: "Connection failed — check URL and credentials"
-                color: Kirigami.Theme.negativeTextColor
+                color: "red"
                 visible: false
                 Layout.alignment: Qt.AlignHCenter
+            }
+
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                spacing: 8
+
+                QQC2.Button {
+                    text: "Cancel"
+                    icon.name: "dialog-cancel"
+                    visible: root.connected
+                    onClicked: loginDialog.close()
+                }
+                QQC2.Button {
+                    id: loginConnectBtn
+                    text: "Connect"
+                    icon.name: "network-connect"
+                    highlighted: true
+
+                    QQC2.Action {
+                        id: loginConnectAction
+                        onTriggered: {
+                            loginError.visible = false
+                            let ok = root.connectAndLoad(loginUrl.text, loginUser.text, loginPass.text)
+                            if (ok) {
+                                if (rememberCheck.checked) {
+                                    credSettings.url = loginUrl.text
+                                    credSettings.user = loginUser.text
+                                    credSettings.pass = loginPass.text
+                                    credSettings.remember = true
+                                } else {
+                                    credSettings.user = ""
+                                    credSettings.pass = ""
+                                    credSettings.remember = false
+                                }
+                                loginDialog.close()
+                            } else {
+                                loginError.visible = true
+                            }
+                        }
+                    }
+
+                    onClicked: loginConnectAction.trigger()
+                }
             }
         }
     }
 
-    // --- Compose Sheet ---
+    // --- Compose Dialog ---
 
-    Kirigami.Dialog {
-        id: composeSheet
+    QQC2.Dialog {
+        id: composeDialog
         title: "Compose"
-        preferredWidth: Kirigami.Units.gridUnit * 30
-        preferredHeight: Kirigami.Units.gridUnit * 25
-        standardButtons: Kirigami.Dialog.NoButton
-
-        customFooterActions: [
-            Kirigami.Action {
-                text: "Send"
-                icon.name: "mail-send"
-                onTriggered: root.sendMail(composeTo.text, composeSubject.text, composeBody.text)
-            },
-            Kirigami.Action {
-                text: "Cancel"
-                icon.name: "dialog-cancel"
-                onTriggered: composeSheet.close()
-            }
-        ]
+        modal: true
+        anchors.centerIn: parent
+        width: 550
+        height: 450
+        standardButtons: QQC2.Dialog.NoButton
 
         ColumnLayout {
-            spacing: Kirigami.Units.smallSpacing
+            anchors.fill: parent
+            spacing: 8
 
             QQC2.TextField {
                 id: composeTo
@@ -765,6 +1028,23 @@ Kirigami.ApplicationWindow {
                     wrapMode: TextEdit.Wrap
                 }
             }
+
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                spacing: 8
+
+                QQC2.Button {
+                    text: "Cancel"
+                    icon.name: "dialog-cancel"
+                    onClicked: composeDialog.close()
+                }
+                QQC2.Button {
+                    text: "Send"
+                    icon.name: "mail-send"
+                    highlighted: true
+                    onClicked: root.sendMail(composeTo.text, composeSubject.text, composeBody.text)
+                }
+            }
         }
 
         onClosed: {
@@ -774,14 +1054,16 @@ Kirigami.ApplicationWindow {
         }
     }
 
-    // --- Reply Sheet ---
+    // --- Reply Dialog ---
 
-    Kirigami.Dialog {
-        id: replySheet
+    QQC2.Dialog {
+        id: replyDialog
         title: "Reply"
-        preferredWidth: Kirigami.Units.gridUnit * 35
-        preferredHeight: Kirigami.Units.gridUnit * 28
-        standardButtons: Kirigami.Dialog.NoButton
+        modal: true
+        anchors.centerIn: parent
+        width: 600
+        height: 500
+        standardButtons: QQC2.Dialog.NoButton
 
         property string replyToId: ""
         property string replySubject: ""
@@ -797,27 +1079,15 @@ Kirigami.ApplicationWindow {
             }
         }
 
-        customFooterActions: [
-            Kirigami.Action {
-                text: "Send Reply"
-                icon.name: "mail-reply-sender"
-                onTriggered: root.replyToMessage(replySheet.replyToId, replyBody.text)
-            },
-            Kirigami.Action {
-                text: "Cancel"
-                icon.name: "dialog-cancel"
-                onTriggered: replySheet.close()
-            }
-        ]
-
         ColumnLayout {
-            spacing: Kirigami.Units.smallSpacing
+            anchors.fill: parent
+            spacing: 8
 
             RowLayout {
                 Layout.fillWidth: true
 
                 QQC2.Label {
-                    text: "Re: " + replySheet.replySubject
+                    text: "Re: " + replyDialog.replySubject
                     font.bold: true
                     elide: Text.ElideRight
                     Layout.fillWidth: true
@@ -833,7 +1103,7 @@ Kirigami.ApplicationWindow {
                     currentIndex: root.replyAboveQuote ? 0 : 1
                     onCurrentIndexChanged: {
                         root.replyAboveQuote = (currentIndex === 0)
-                        replySheet.prepareBody()
+                        replyDialog.prepareBody()
                     }
                 }
             }
@@ -848,22 +1118,43 @@ Kirigami.ApplicationWindow {
                     font.family: "monospace"
                 }
             }
+
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                spacing: 8
+
+                QQC2.Button {
+                    text: "Cancel"
+                    icon.name: "dialog-cancel"
+                    onClicked: replyDialog.close()
+                }
+                QQC2.Button {
+                    text: "Send Reply"
+                    icon.name: "mail-reply-sender"
+                    highlighted: true
+                    onClicked: root.replyToMessage(replyDialog.replyToId, replyBody.text)
+                }
+            }
         }
 
         onClosed: replyBody.text = ""
     }
 
-    // --- Move Sheet ---
+    // --- Move Dialog ---
 
-    Kirigami.Dialog {
-        id: moveSheet
+    QQC2.Dialog {
+        id: moveDialog
         title: "Move to..."
-        preferredWidth: Kirigami.Units.gridUnit * 20
-        standardButtons: Kirigami.Dialog.Cancel
+        modal: true
+        anchors.centerIn: parent
+        width: 300
+        height: 400
+        standardButtons: QQC2.Dialog.Cancel
 
         ListView {
-            implicitHeight: Kirigami.Units.gridUnit * 15
+            anchors.fill: parent
             model: root.mailboxes
+            clip: true
 
             delegate: QQC2.ItemDelegate {
                 required property var modelData
@@ -872,7 +1163,7 @@ Kirigami.ApplicationWindow {
                 icon.name: "folder-mail"
                 onClicked: {
                     root.moveMessage(root.currentEmail.id, modelData.name)
-                    moveSheet.close()
+                    moveDialog.close()
                 }
             }
         }

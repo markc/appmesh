@@ -672,7 +672,7 @@ QQC2.ApplicationWindow {
                 QQC2.SplitView.fillHeight: true
                 QQC2.SplitView.minimumWidth: root.readingPanePosition === "right" ? 250 : undefined
                 QQC2.SplitView.minimumHeight: root.readingPanePosition === "bottom" ? 120 : undefined
-                color: palette.window
+                color: palette.base
 
                 ColumnLayout {
                     anchors.fill: parent
@@ -787,7 +787,8 @@ QQC2.ApplicationWindow {
                                     Layout.fillWidth: true
                                     Layout.leftMargin: 8
                                     Layout.rightMargin: 8
-                                    textFormat: Text.PlainText
+                                    textFormat: Text.MarkdownText
+                                    onLinkActivated: function(link) { Qt.openUrlExternally(link) }
                                 }
 
                                 Item { Layout.preferredHeight: 8 }

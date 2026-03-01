@@ -47,16 +47,27 @@ Kirigami.ApplicationWindow {
 
     // --- Helpers ---
 
-    function formatDate(d) {
-        if (!d) return ""
+    function parseDate(d) {
+        if (!d) return null
         let date
         if (/^\d+$/.test(d)) {
             date = new Date(parseInt(d) * 1000)
         } else {
             date = new Date(d)
         }
-        if (isNaN(date.getTime())) return d
+        return isNaN(date.getTime()) ? null : date
+    }
+
+    function formatDate(d) {
+        let date = parseDate(d)
+        if (!date) return d || ""
         return date.toLocaleString(Qt.locale(), "ddd d MMM yyyy HH:mm")
+    }
+
+    function formatDateShort(d) {
+        let date = parseDate(d)
+        if (!date) return d || ""
+        return date.toLocaleString(Qt.locale(), "d MMM HH:mm")
     }
 
     function quoteText(email) {
@@ -417,9 +428,17 @@ Kirigami.ApplicationWindow {
                                     Layout.fillWidth: true
                                 }
                                 QQC2.Label {
-                                    text: root.formatDate(modelData.date)
+                                    text: root.formatDateShort(modelData.date)
                                     font.pointSize: Kirigami.Theme.smallFont.pointSize
                                     opacity: 0.7
+                                    QQC2.ToolTip.text: root.formatDate(modelData.date)
+                                    QQC2.ToolTip.visible: dateHover.containsMouse
+                                    MouseArea {
+                                        id: dateHover
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        acceptedButtons: Qt.NoButton
+                                    }
                                 }
                             }
                             QQC2.Label {

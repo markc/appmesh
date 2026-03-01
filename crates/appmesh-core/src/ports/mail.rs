@@ -3,8 +3,10 @@ use std::sync::Mutex;
 
 use jmap_client::client::Client;
 use jmap_client::core::query;
-use jmap_client::core::response::{EmailGetResponse, IdentityGetResponse};
+use jmap_client::core::response::{EmailGetResponse, EmailSetResponse, IdentityGetResponse};
+use jmap_client::core::set::SetObject;
 use jmap_client::email;
+use jmap_client::email::EmailBodyPart;
 use jmap_client::mailbox;
 
 use crate::port::*;
@@ -375,16 +377,8 @@ impl MailPort {
         // Find Sent mailbox
         let sent_id = self.find_mailbox_id(client, "Sent")?;
 
-        // Build RFC 5322 message
-        let raw = build_rfc5322(from, to, subject, body, None, None);
-
-        // Import into Sent with no draft keyword
-        let email = self
-            .rt
-            .block_on(client.email_import(raw, [&sent_id], None::<Vec<String>>, None))
-            .map_err(|e| Self::port_err(format!("email_import failed: {}", e)))?;
-
-        let email_id = email.id().unwrap_or("unknown").to_string();
+        // Create email via Email/set with structured properties
+        let email_id = self.create_email(client, from, to, subject, body, &sent_id, None, None)?;
 
         // Submit for delivery
         let submission = self
@@ -447,50 +441,39 @@ impl MailPort {
             format!("Re: {}", orig_subject)
         };
 
-        // In-Reply-To: original Message-ID
-        let in_reply_to = original
+        // Find Sent mailbox
+        let sent_id = self.find_mailbox_id(client, "Sent")?;
+
+        // Build reply In-Reply-To and References lists (without angle brackets for JMAP)
+        let in_reply_to_ids: Option<Vec<String>> = original
             .message_id()
             .and_then(|ids| ids.first())
-            .map(|id| format!("<{}>", id));
+            .map(|id| vec![id.to_string()]);
 
-        // References: original References + original Message-ID
-        let references = {
+        let reference_ids: Option<Vec<String>> = {
             let mut refs: Vec<String> = original
                 .references()
                 .unwrap_or(&[])
                 .iter()
-                .map(|r| format!("<{}>", r))
+                .map(|r| r.to_string())
                 .collect();
             if let Some(msg_id) = original.message_id().and_then(|ids| ids.first()) {
-                refs.push(format!("<{}>", msg_id));
+                refs.push(msg_id.to_string());
             }
-            if refs.is_empty() {
-                None
-            } else {
-                Some(refs.join(" "))
-            }
+            if refs.is_empty() { None } else { Some(refs) }
         };
 
-        // Find Sent mailbox
-        let sent_id = self.find_mailbox_id(client, "Sent")?;
-
-        // Build reply RFC 5322
-        let raw = build_rfc5322(
+        // Create reply via Email/set
+        let email_id = self.create_email(
+            client,
             &from_email,
             &orig_from,
             &reply_subject,
             body,
-            in_reply_to.as_deref(),
-            references.as_deref(),
-        );
-
-        // Import into Sent
-        let email = self
-            .rt
-            .block_on(client.email_import(raw, [&sent_id], None::<Vec<String>>, None))
-            .map_err(|e| Self::port_err(format!("email_import failed: {}", e)))?;
-
-        let email_id = email.id().unwrap_or("unknown").to_string();
+            &sent_id,
+            in_reply_to_ids.as_deref(),
+            reference_ids.as_deref(),
+        )?;
 
         // Submit for delivery
         let submission = self
@@ -735,6 +718,54 @@ impl MailPort {
         ))
     }
 
+    /// Create an email via Email/set with structured JMAP properties.
+    /// Returns the created email ID.
+    fn create_email(
+        &self,
+        client: &Client,
+        from: &str,
+        to: &str,
+        subject: &str,
+        body: &str,
+        mailbox_id: &str,
+        in_reply_to: Option<&[String]>,
+        references: Option<&[String]>,
+    ) -> Result<String, PortError> {
+        let email_id = self
+            .rt
+            .block_on(async {
+                let mut request = client.build();
+                let set_req = request.set_email();
+                let create = set_req.create();
+                create
+                    .mailbox_ids([mailbox_id])
+                    .from([from])
+                    .to([to])
+                    .subject(subject)
+                    .text_body(
+                        EmailBodyPart::new()
+                            .part_id("1")
+                            .content_type("text/plain"),
+                    )
+                    .body_value("1".to_string(), body);
+                if let Some(ids) = in_reply_to {
+                    create.in_reply_to(ids.iter().map(|s| s.as_str()));
+                }
+                if let Some(ids) = references {
+                    create.references(ids.iter().map(|s| s.as_str()));
+                }
+                let id = create.create_id().unwrap();
+                request
+                    .send_single::<EmailSetResponse>()
+                    .await
+                    .and_then(|mut r| r.created(&id))
+                    .map(|e| e.id().unwrap_or("unknown").to_string())
+            })
+            .map_err(|e| Self::port_err(format!("email_set create failed: {}", e)))?;
+
+        Ok(email_id)
+    }
+
     fn find_mailbox_id(&self, client: &Client, name: &str) -> Result<String, PortError> {
         let response = self
             .rt
@@ -823,87 +854,6 @@ impl MailPort {
         // Fallback to preview
         msg.preview().unwrap_or("").to_string()
     }
-}
-
-/// Build a minimal RFC 5322 message.
-fn build_rfc5322(
-    from: &str,
-    to: &str,
-    subject: &str,
-    body: &str,
-    in_reply_to: Option<&str>,
-    references: Option<&str>,
-) -> Vec<u8> {
-    use std::fmt::Write;
-
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-
-    // Generate a simple Message-ID
-    let msg_id = format!("<{}.{}@appmesh>", now, std::process::id());
-
-    let mut msg = String::new();
-    let _ = writeln!(msg, "From: {}", from);
-    let _ = writeln!(msg, "To: {}", to);
-    let _ = writeln!(msg, "Subject: {}", subject);
-    let _ = writeln!(msg, "Date: {}", rfc2822_date(now));
-    let _ = writeln!(msg, "Message-ID: {}", msg_id);
-    let _ = writeln!(msg, "MIME-Version: 1.0");
-    let _ = writeln!(msg, "Content-Type: text/plain; charset=utf-8");
-    if let Some(irt) = in_reply_to {
-        let _ = writeln!(msg, "In-Reply-To: {}", irt);
-    }
-    if let Some(refs) = references {
-        let _ = writeln!(msg, "References: {}", refs);
-    }
-    let _ = writeln!(msg);
-    msg.push_str(body);
-
-    msg.into_bytes()
-}
-
-/// Format unix timestamp as RFC 2822 date string.
-fn rfc2822_date(epoch_secs: u64) -> String {
-    // Simple UTC-only formatting (sufficient for JMAP submission)
-    let secs_per_day = 86400u64;
-    let days = epoch_secs / secs_per_day;
-    let day_secs = epoch_secs % secs_per_day;
-    let hours = day_secs / 3600;
-    let minutes = (day_secs % 3600) / 60;
-    let seconds = day_secs % 60;
-
-    // Days since Unix epoch (Thu 1 Jan 1970)
-    // Compute year/month/day from days since epoch
-    let (year, month, day) = days_to_ymd(days);
-
-    let day_names = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
-    let month_names = [
-        "", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    let dow = (days % 7) as usize; // 0 = Thu (epoch was Thursday)
-
-    format!(
-        "{}, {:02} {} {} {:02}:{:02}:{:02} +0000",
-        day_names[dow], day, month_names[month as usize], year, hours, minutes, seconds
-    )
-}
-
-/// Convert days since Unix epoch to (year, month, day).
-fn days_to_ymd(days: u64) -> (u64, u64, u64) {
-    // Algorithm from Howard Hinnant's chrono-compatible date library
-    let z = days + 719468;
-    let era = z / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
 }
 
 // Safety: MailPort is only used from one thread at a time via Mutex or single-threaded FFI
